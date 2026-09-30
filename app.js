@@ -376,12 +376,19 @@ function tick() {
 function startClock() { if (!timer) timer = setInterval(tick, 100); }
 function stopClock() { if (timer) { clearInterval(timer); timer = null; } }
 
+/* The build tag belongs to the boot screen: it answers "which bundle is this?"
+ * before anything runs, and is in the way once the run is what matters. */
+function setBver(show) {
+  $("bver").style.display = show ? "" : "none";
+}
+
 /* flow */
 function begin() {
   $("boot").classList.add("hidden");
   $("done").classList.add("hidden");
   $("measure").classList.add("hidden");
   $("main").classList.remove("hidden");
+  setBver(false);
   $("log").innerHTML = "";
   $("doneSummary").textContent = "";
   logLines = 0; stageDone = 0; sentCount = 0;
@@ -431,6 +438,13 @@ function finish(ok, why) {
      stages/queue/session/log stay expanded and readable. (The verdict screen
      covers this view; "view run" dismisses it.) */
   $("sumSession").textContent = ok ? "complete" : "failed";
+
+  /* The verdict covers the run, and "view run" is what brings it back, so the
+     run view is hidden and the window scrolled back to the top. Without this
+     the verdict lands below a full screen of log and you have to scroll to
+     find it. */
+  $("main").classList.add("hidden");
+  window.scrollTo(0, 0);
 
   $("done").className = "screen center" + (ok ? "" : " error");
   $("doneTitle").textContent = ok ? "JAILBROKEN" : "FAILED";
@@ -621,6 +635,7 @@ function showMeasure() {
   $("main").classList.add("hidden");
   $("done").classList.add("hidden");
   $("measure").classList.remove("hidden");
+  setBver(false);
   $("mOut").textContent = measureReport();
   if (navigator.clipboard) navigator.clipboard.writeText(measureReport()).catch(function () {});
   /* also report to the host so nothing has to be read off the screen */
@@ -737,6 +752,7 @@ function init() {
     /* dismiss the verdict so the finished run (log, queue, stages) is visible */
     $("done").classList.add("hidden");
     $("main").classList.remove("hidden");
+    window.scrollTo(0, 0);
     var box = $("log");
     box.scrollTop = box.scrollHeight;
     log("viewing completed run", "info");
