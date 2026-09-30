@@ -1,0 +1,6 @@
+name = "ps5-jailbreak-store"
+compatibility_date = "2026-08-12"
+
+[site]
+bucket = "./"
+pages_build_output_dir = "./"

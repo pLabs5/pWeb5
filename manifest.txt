@@ -1,0 +1,39 @@
+# Jailbreak Store autoloader — payload manifest
+#
+# This file decides which payloads the autoloader sends to elfldr, and in what
+# order. Resolution order at runtime:
+#
+#   1. /data/autoldr on the console, if it exists  (highest priority)
+#   2. this file, fetched from the site origin
+#   3. built-in firmware default
+#
+# Format: one "name=url" per line. Blank lines and lines starting with # are
+# ignored. A bare "name" with no "=" is treated as payloads/<name>.
+#
+# Order matters. The list is sent to elfldr in the order written, so put the
+# payload that patches the kernel and remounts first, and the payload that
+# depends on that result second.
+
+# --- default: kstuff-lite, for firmware above 10.01 ---
+kstuff-lite.elf=payloads/kstuff-lite-1.11B.elf
+etahen.elf=payloads/etaHEN-Oct1.elf
+
+# --- alternative: full kstuff, for firmware 10.01 and below ---
+# kstuff.elf=payloads/kstuff.elf
+# etahen.elf=payloads/etaHEN-Oct1.elf
+
+# --- example: add a third payload, e.g. shadowmountplus ---
+# shadowmountplus.elf=payloads/shadowmountplus.elf
+
+# ============================================================================
+# EXPIRY: payloads/etaHEN-Oct1.elf stops working on 1 October.
+#
+# etaHEN is time-limited. The 1 October build is the one committed here, so the
+# site will start failing on/after that date with no obvious cause - it will
+# look like a successful send followed by nothing happening.
+#
+# When that happens, pull the new build from the etaHEN Discord, and replace
+# payloads/etaHEN-Oct1.elf plus the manifest line above with a filename that
+# says when the new one expires. Do not silently overwrite it: the filename is
+# the only place the expiry date is recorded in this repo.
+# ============================================================================

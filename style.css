@@ -1,0 +1,311 @@
+/* Jailbreak Store UI — fluid, viewport-relative.
+ *
+ * No hardcoded pixel size is assumed. The root font scales with clamp()/vmin,
+ * every dimension below is in rem, and the log grows into whatever vertical
+ * space is left over. So the same markup fits a small modal popup or a 4K
+ * desktop browser without a separate layout.
+ */
+
+* { margin:0; padding:0; box-sizing:border-box; }
+
+:root {
+  --bg:      #0a0a0a;
+  --bg2:     #0e0e0e;
+  --line:    #1e1e1e;
+  --line2:   #2a2a2a;
+  --txt:     #b9b9b9;
+  --hi:      #e8e8e8;
+  --dim:     #6a6a6a;
+  --dim2:    #474747;
+  --grn:     #33ff77;
+  --grn-dim: #1d7a42;
+  --amb:     #ffb02e;
+  --red:     #ff4d4d;
+  --cyan:    #35d0d0;
+
+  /* single knob for the whole UI density */
+  --fs: clamp(10px, 0.5vmin + 9.2px, 14px);
+  --gut: clamp(5px, 1.1vmin, 12px);
+  --maxw: 44rem;
+}
+
+html {
+  font-size: var(--fs);
+  -webkit-text-size-adjust:100%;
+}
+
+html, body { height:100%; }
+
+body {
+  background:var(--bg);
+  color:var(--txt);
+  font-family:ui-monospace,"DejaVu Sans Mono",Menlo,Consolas,monospace;
+  font-size:1rem;
+  line-height:1.5;
+  -webkit-font-smoothing:none;
+  display:flex;
+  flex-direction:column;
+  overflow-x:hidden;
+}
+
+.hidden { display:none !important; }
+
+.cur { animation:blink 1s steps(1) infinite; color:var(--grn); }
+@keyframes blink { 0%,50%{opacity:1} 51%,100%{opacity:0} }
+
+.lnk {
+  background:none; border:0; padding:0; cursor:pointer;
+  color:var(--dim); font:inherit; font-size:.85rem;
+  letter-spacing:.04em;
+}
+.lnk:hover, .lnk:focus-visible { color:var(--grn); outline:none; }
+
+/* ---------- screens ---------- */
+/* min-height first for old parsers, dvh so mobile-style viewports behave */
+.screen { min-height:100vh; min-height:100dvh; width:100%; }
+
+.screen.center {
+  display:flex; align-items:center; justify-content:center; text-align:center;
+}
+
+.boot-inner { padding:var(--gut) calc(var(--gut) * 1.5); max-width:100%; }
+
+.ascii {
+  color:var(--grn);
+  font-size:.62rem;
+  line-height:1.15;
+  font-weight:700;
+  text-shadow:0 0 6px rgba(51,255,119,.35);
+  overflow-x:auto;
+}
+
+.bootline { color:var(--dim); font-size:.92rem; margin-top:.7rem; }
+
+.verdict {
+  font-size:1.3rem; font-weight:700; letter-spacing:.1em; color:var(--grn);
+  text-shadow:0 0 8px rgba(51,255,119,.4);
+}
+#done.error .verdict { color:var(--red); text-shadow:0 0 8px rgba(255,77,77,.4); }
+
+/* collapsed-run recap on the verdict screen */
+.summary {
+  margin-top:.8rem; padding:.5rem .6rem;
+  font-size:.75rem; line-height:1.6; color:var(--dim);
+  text-align:left;
+  border:1px solid var(--line); background:var(--bg2);
+  max-width:26rem; margin-left:auto; margin-right:auto;
+  white-space:pre-wrap; overflow-wrap:anywhere;
+  max-height:40vh; overflow-y:auto;
+}
+.summary b { color:var(--grn); font-weight:400; }
+.summary i { color:var(--amb); font-style:normal; }
+#done.error .summary b { color:var(--red); }
+
+/* ---------- main: single flex column that fills the window ---------- */
+/* full-bleed on purpose: a max-width + auto margins column reads as a narrow
+   strip floating in the middle of a large window. */
+#main {
+  display:flex;
+  flex-direction:column;
+  width:100%;
+  max-width:100%;
+}
+
+.bar {
+  flex:0 0 auto;
+  display:flex; justify-content:space-between; align-items:center; gap:var(--gut);
+  padding:.55rem var(--gut);
+  border-bottom:1px solid var(--line);
+  background:var(--bg2);
+}
+.tag { color:var(--hi); font-weight:700; letter-spacing:.1em; }
+.fw { color:var(--grn-dim); white-space:nowrap; margin-left:auto; }
+
+/* activity LED: pulses while the run is in flight */
+.led { width:.5rem; height:.5rem; border-radius:50%; background:var(--dim2); flex:0 0 auto; }
+.led.run { background:var(--cyan); animation:pulse 1.1s ease-in-out infinite; }
+.led.ok  { background:var(--grn); box-shadow:0 0 6px rgba(51,255,119,.6); }
+.led.err { background:var(--red); box-shadow:0 0 6px rgba(255,77,77,.6); }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
+
+/* ---------- steps ---------- */
+.steps { flex:0 0 auto; }
+.step {
+  display:flex; align-items:center; gap:.6rem;
+  padding:.3rem var(--gut);
+  font-size:.95rem;
+  border-bottom:1px solid #141414;
+}
+.step:last-child { border-bottom:0; }
+.step i { color:var(--dim2); font-style:normal; width:.7rem; flex:0 0 auto; }
+.step .what { flex:1 1 auto; color:var(--dim); letter-spacing:.04em; }
+.step .stat { color:var(--dim2); font-size:.82rem; white-space:nowrap; }
+
+.step.active i, .step.active .what, .step.active .stat { color:var(--cyan); }
+.step.done i, .step.done .what, .step.done .stat { color:var(--grn); }
+.step.fail i, .step.fail .what, .step.fail .stat { color:var(--red); }
+
+/* ---------- progress ---------- */
+.prog {
+  flex:0 0 auto; height:3px; background:#131313;
+  border-bottom:1px solid var(--line);
+  position:relative; overflow:hidden;
+}
+/* segmented ticks so the bar reads as a track, not a blob */
+.prog::after {
+  content:""; position:absolute; inset:0; pointer-events:none;
+  background:repeating-linear-gradient(90deg,
+    transparent 0, transparent calc(10% - 1px),
+    rgba(0,0,0,.55) calc(10% - 1px), rgba(0,0,0,.55) 10%);
+}
+.prog i { display:block; height:100%; width:0%; background:var(--cyan); transition:width .35s linear; }
+.prog i.ok { background:var(--grn); }
+.prog i.err { background:var(--red); }
+
+/* ---------- progress caption ---------- */
+.rowhead {
+  flex:0 0 auto;
+  display:flex; justify-content:space-between; align-items:baseline; gap:var(--gut);
+  padding:.3rem var(--gut);
+  font-size:.78rem; color:var(--dim2);
+  border-bottom:1px solid var(--line);
+  background:var(--bg2);
+}
+.rowhead .pct { color:var(--txt); }
+.rowhead .now { color:var(--cyan); text-align:right; overflow-wrap:anywhere; }
+
+/* ---------- collapsible sections ---------- */
+.sec { flex:0 0 auto; border-bottom:1px solid var(--line); overflow:hidden; }
+.sec h2 { border-bottom:0; }
+
+.sec .body {
+  overflow:hidden;
+  max-height:60rem;
+  transition:max-height .28s ease, opacity .2s ease;
+  opacity:1;
+}
+.sec.collapsed > .body,
+.sec.collapsed .log { max-height:0 !important; opacity:0; }
+.sec.collapsed h2 { color:var(--dim2); }
+
+.sum { color:var(--grn-dim); }
+
+.tg {
+  min-width:1.4em; text-align:center;
+  border:1px solid var(--line2); line-height:1.3;
+  margin-left:.35em;
+}
+.tg:hover { border-color:var(--grn-dim); }
+
+
+/* ---------- key/value ---------- */
+.kv {
+  flex:0 0 auto;
+  display:grid; grid-template-columns:auto minmax(0,1fr);
+  gap:.1rem .7rem;
+  padding:.5rem var(--gut);
+  font-size:.85rem;
+  border-bottom:1px solid var(--line);
+}
+.kv > span:nth-child(odd) { color:var(--dim2); }
+.kv > span:nth-child(even) { color:var(--txt); text-align:right; overflow-wrap:anywhere; }
+.kv #kPort, .kv #kSource { color:var(--dim); }
+.kv #kPort.ok { color:var(--grn); }
+
+h2 {
+  font-size:.8rem; font-weight:400; letter-spacing:.14em; text-transform:uppercase;
+  color:var(--dim2); padding:.45rem var(--gut);
+  border-bottom:1px solid var(--line);
+  display:flex; justify-content:space-between; align-items:center; gap:var(--gut);
+}
+h2 em { font-style:normal; letter-spacing:.04em; text-transform:none; }
+
+/* ---------- payload queue ---------- */
+.pay { flex:0 0 auto; }
+.plist { list-style:none; }
+.plist li {
+  display:flex; align-items:center; gap:.6rem;
+  padding:.22rem var(--gut);
+  font-size:.95rem;
+}
+.plist li i {
+  width:.42rem; height:.42rem; border-radius:50%;
+  background:var(--dim2); flex:0 0 auto;
+}
+.plist .pname { flex:1 1 auto; overflow-wrap:anywhere; }
+.plist em { font-style:normal; color:var(--dim2); font-size:.82rem; white-space:nowrap; }
+.plist li.sent i { background:var(--grn); }
+.plist li.sent .pname, .plist li.sent em { color:var(--grn); }
+.plist li.warming i { background:var(--amb); }
+.plist li.warming em { color:var(--amb); }
+
+/* ---------- log: takes all leftover height, but never gets crushed ---------- */
+#secLog {
+  flex:1 1 auto;
+  display:flex;
+  flex-direction:column;
+  min-height:8rem;
+}
+#secLog h2 { flex:0 0 auto; }
+.log {
+  flex:1 1 auto;
+  min-height:5rem;
+  overflow-y:auto;
+  -webkit-overflow-scrolling:touch;
+  padding:.35rem var(--gut);
+  font-size:.82rem;
+  line-height:1.55;
+}
+.log .line { display:flex; gap:.5rem; }
+.log .ts { color:#3a3a3a; flex:0 0 auto; }
+.log .tx { color:var(--dim); overflow-wrap:anywhere; white-space:pre-wrap; min-width:0; }
+.log .info .tx { color:var(--txt); }
+.log .success .tx { color:var(--grn); }
+.log .warning .tx { color:var(--amb); }
+.log .error .tx { color:var(--red); }
+.log .sys .tx { color:var(--cyan); }
+
+.note {
+  flex:0 0 auto;
+  padding:.5rem var(--gut);
+  font-size:.72rem; line-height:1.5; color:var(--dim2);
+  border-top:1px solid var(--line);
+}
+
+#exploit { display:none; }
+
+/* ---------- viewport probe ---------- */
+#measure { padding:var(--gut); }
+#measure .boot-inner { max-width:var(--maxw); margin:0 auto; }
+#measure .mhead {
+  font-size:.85rem; font-weight:700; letter-spacing:.14em;
+  color:var(--grn); border:0; padding:0 0 .5rem; display:block;
+}
+#measure .mout {
+  font-size:.88rem; line-height:1.7; color:var(--cyan);
+  white-space:pre; overflow-x:auto; padding-bottom:.5rem;
+}
+
+/* ---------- narrow windows: shave the optional chrome ---------- */
+@media (max-width:22rem) {
+  .note { display:none; }
+  .ascii { font-size:.55rem; }
+}
+
+/* ---------- short windows: buy back vertical space for the log ---------- */
+@media (max-height:26rem) {
+  body { line-height:1.35; }
+  .bar { padding:.35rem var(--gut); }
+  .step { padding:.1rem var(--gut); }
+  .kv { padding:.25rem var(--gut); gap:0 .7rem; }
+  .plist li { padding:.05rem var(--gut); }
+  h2 { padding:.25rem var(--gut); }
+  .log { font-size:.78rem; line-height:1.45; padding:.2rem var(--gut); }
+  #secLog { min-height:6.5rem; }
+  .log { min-height:4.5rem; }
+}
+
+@media (max-height:20rem) {
+  .ascii { font-size:.5rem; }
+  .note { display:none; }
+}
