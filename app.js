@@ -198,6 +198,23 @@ function initEnv() {
    * worth guessing at from the firmware here - boot.js logs what it sent. */
   log("document " + document.documentElement.scrollWidth + "x" +
       document.documentElement.scrollHeight, "sys");
+  /* Whether the console is executing this current bundle needs a fresh browser
+   * load, which is awkward on the console - so the running page proves itself:
+   * it re-fetches the entry HTML and stylesheet bypassing cache and logs their
+   * sizes and head bytes. Comparing that line to the values from the deploy
+   * tells us in seconds if the session is stale, without opening anything. */
+  fetch("index.html", { cache: "no-store" })
+    .then(function (r) { return r.text(); })
+    .then(function (t) {
+      var parts = ["index " + t.length + " " + JSON.stringify(t.slice(0, 48))];
+      return fetch("style.css", { cache: "no-store" })
+        .then(function (r) { return r.text(); })
+        .then(function (s) {
+          parts.push("css " + s.length + " " + JSON.stringify(s.slice(0, 48)));
+          log("probe " + parts.join(" | "), "sys");
+        });
+    })
+    .catch(function () { log("probe fetch failed", "warning"); });
 }
 
 /* log. Each line is one flush div of plain text, marker first, exactly like
