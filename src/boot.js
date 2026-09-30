@@ -140,9 +140,14 @@ const ELFDR_PORT = 9021;
 const CHUNK = 0x10000;
 const SEEK_SET = 0x0;
 const SEEK_END = 0x2;
-/* Console-local payloads are addressed under this root and nowhere else, so a
+/* Console-local paths are addressed under this root and nowhere else, so a
  * manifest cannot ask the exploit to open an arbitrary path on the console. */
 const LOCAL_ROOT = "/data/autoldr";
+/* Where a console-local manifest lives, and how big one is allowed to be. A
+ * manifest is a handful of short lines; the cap just stops a stray large file
+ * from turning into a big read before any payload has loaded. */
+const LOCAL_MANIFEST_PATH = LOCAL_ROOT + "/manifest.txt";
+const MAX_TEXT_SIZE = 0x10000;
 /* A ceiling, not a reservation: the mapping below is sized from the file, and
  * this only rejects a size a payload could not plausibly be. */
 const MAX_LOCAL_SIZE = 0x4000000;
@@ -298,10 +303,61 @@ function parseManifest(text) {
   return entries;
 }
 
-/* Remote only for now. A console-local manifest was tried and pulled: it
- * needed a 16MB mapping per candidate, twice, before any payload loaded, which
- * was enough to wedge the exploit on console. See the README. */
-async function resolveEntries() {
+/* Read a console-local text file into a JS string.
+ *
+ * This is what a local manifest needs, and it is deliberately not mapElfFromDisk:
+ * a manifest is text, not an ELF, so the magic check there would reject every
+ * real one. The old attempt failed for a different reason anyway - it mapped a
+ * fixed 16MB per candidate, twice, before any payload loaded, which was enough
+ * to wedge the exploit (4ba38c6). Here the bytes go into a malloc'd buffer that
+ * is already backed by a JS array, so there is no mapping to reserve at all and
+ * the read lands somewhere the page can just index into.
+ *
+ * Returns null when the file is not there, which is the normal case: most
+ * consoles have no local manifest and must not be treated as broken. */
+async function readTextFromDisk(path, p, chain) {
+  const pathAddr = p.stringify(path);
+
+  const fd = low(await chain.syscall(FS.OPEN, pathAddr, O_RDONLY, 0));
+  if (fd < 0) return null;
+
+  try {
+    const size = low(await chain.syscall(FS.LSEEK, fd, 0, SEEK_END));
+    if (size < 0) return null;
+    /* A manifest is a short text file. Anything this big is not one, and the
+     * read loop below is per-chunk, so cap it rather than trust the size. */
+    if (size === 0 || size > MAX_TEXT_SIZE) return null;
+    await chain.syscall(FS.LSEEK, fd, 0, SEEK_SET);
+
+    const buffer = p.malloc(size, 1);
+    let total = 0;
+    while (total < size) {
+      const got = low(await chain.syscall(FS.READ, fd, buffer.add32(total), Math.min(CHUNK, size - total)));
+      if (got <= 0) break;
+      total += got;
+    }
+    if (total !== size) return null;
+
+    const bytes = buffer.backing;
+    let text = "";
+    for (let i = 0; i < total; i++) text += String.fromCharCode(bytes[i]);
+    return text;
+  } finally {
+    await chain.syscall(FS.CLOSE, fd);
+  }
+}
+
+/* A console-local manifest at LOCAL_MANIFEST_PATH is read after the kernel
+ * stage and merged under the site's: local entries run after the remote ones, in
+ * file order. Appended rather than replacing, so a local file can add a plugin
+ * without having to restate the three the site already loads - and so a typo in
+ * it cannot quietly take the jailbreak away.
+ *
+ * Only reached once the chain can read the console's filesystem at all, which
+ * is the same point the local: payload entries need. */
+async function resolveEntries(p, chain) {
+  let entries = null;
+
   let text = null;
   try {
     const response = await fetch("manifest.txt", { cache: "no-store" });
@@ -316,17 +372,37 @@ async function resolveEntries() {
     const parsed = parseManifest(text);
     if (parsed.length) {
       window.writeLog("manifest: manifest.txt (site)", "info");
-      return parsed;
+      entries = parsed;
     }
   }
-  /* Must mirror the order in manifest.txt: kstuff first, then etaHEN on its own,
-   * then shadowmountplus last. Reordering here reintroduces the panic. */
-  window.writeLog("manifest: unavailable, using the built-in fallback", "warning");
-  return [
-    { name: "kstuff-lite.elf", url: "payloads/kstuff-lite-1.11B.elf", local: false },
-    { name: "etahen.elf", url: "payloads/etaHEN.elf", local: false },
-    { name: "shadowmountplus.elf", url: "payloads/shadowmountplus.elf", local: false },
-  ];
+  if (entries === null) {
+    /* Must mirror the order in manifest.txt: kstuff first, then etaHEN on its
+     * own, then shadowmountplus last. Reordering here reintroduces the panic. */
+    window.writeLog("manifest: unavailable, using the built-in fallback", "warning");
+    entries = [
+      { name: "kstuff-lite.elf", url: "payloads/kstuff-lite-1.11B.elf", local: false },
+      { name: "etahen.elf", url: "payloads/etaHEN.elf", local: false },
+      { name: "shadowmountplus.elf", url: "payloads/shadowmountplus.elf", local: false },
+    ];
+  }
+
+  /* A missing or unreadable local manifest is not an error - it is the normal
+   * case for anyone who has not made one. Only a local file that parses but
+   * names something wrong fails the run, same as a bad line on the site. */
+  let localText = null;
+  try {
+    localText = await readTextFromDisk(LOCAL_MANIFEST_PATH, p, chain);
+  } catch (e) {
+    window.writeLog("manifest: " + LOCAL_MANIFEST_PATH + " unreadable: " + e.message, "warning");
+  }
+  if (localText !== null) {
+    const local = parseManifest(localText);
+    if (local.length) {
+      window.writeLog("manifest: " + LOCAL_MANIFEST_PATH + " (console) +" + local.length, "info");
+      entries = entries.concat(local);
+    }
+  }
+  return entries;
 }
 
 /* Send every entry in manifest order, waiting between them. etaHEN starts its
@@ -334,7 +410,7 @@ async function resolveEntries() {
  * the two must not be in flight at the same time - that combination is what
  * panicked the console. ?payloadDelay=N overrides the gap in seconds. */
 async function loadPayloads(p, chain) {
-  const entries = await resolveEntries();
+  const entries = await resolveEntries(p, chain);
   const query = new URLSearchParams(location.search);
   const delay = Number(query.get("payloadDelay") || 5) * 1000;
 

@@ -8,10 +8,10 @@
 #   1. this file, fetched from the site origin
 #   2. a built-in fallback of the three bundled payloads
 #
-# Everything here is fetched over HTTP from this site. Console-local manifests
-# were tried and removed: reading a local file needed a large mapping per
-# candidate, and doing that before any payload loaded was enough to wedge the
-# exploit on console.
+# Everything here is fetched over HTTP from this site. You do not have to edit
+# this file to add your own plugins: drop a manifest at /data/autoldr/manifest.txt
+# on the console and its entries are appended to whatever this file resolves to,
+# in the order you wrote them. See "personal plugins" below.
 #
 # Format: one "name=target" per line. Blank lines and lines starting with # are
 # ignored, as is anything after a # on a line. A bare "name" with no "=" is
@@ -64,6 +64,30 @@ shadowmountplus.elf=payloads/shadowmountplus.elf
 
 # --- a payload dropped on the console beforehand, no host needed ---
 # ProsperoMgr.elf=local:/data/autoldr/ProsperoMgr.elf
+
+# ============================================================================
+# PERSONAL PLUGINS: /data/autoldr/manifest.txt on the console
+#
+# Put your own entries in that file and they are appended to whatever this file
+# resolves to, so you can add a plugin without editing this one. Same format,
+# same three target forms, including local: for ELFs you dropped on the console.
+#
+#   /data/autoldr/manifest.txt:
+#     # my own stuff
+#     ProsperoMgr.elf=local:/data/autoldr/plugins/ProsperoMgr.elf
+#
+# It is read after the kernel stage, which is the first point the chain can read
+# the console's filesystem at all. A missing file is normal and changes nothing.
+# A file that is there but names something invalid fails the run, the same as a
+# bad line here, so a typo cannot look like a successful run.
+#
+# Appending means your entries land AFTER the ones below, so shadowmountplus is
+# no longer last. It remounts /system_ex, and the ordering that keeps the
+# console from panicking is the reason it is last here. Keep that in mind: the
+# ?payloadDelay= gap still applies between every entry, yours included.
+#
+# If you want full control of the order, say so and this will grow an override.
+# ============================================================================
 
 # ============================================================================
 # EXPIRY: payloads/etaHEN.elf stops working on 1 October 2026.

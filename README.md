@@ -75,9 +75,38 @@ opening an arbitrary path on the console. A `..` segment is rejected as well —
 the kernel would resolve it after the prefix check, so the prefix alone is not
 confinement. The mapping is sized from the file with `lseek` rather than a fixed
 ceiling — the ceiling version reserved 16MB per candidate and two of those was
-what wedged the exploit when this path was pulled in `4ba38c6`. That was a local
-*manifest* being read through an ELF-only mapper, which could only ever fail;
-local *payloads* never had the bug.
+what wedged the exploit when this path was pulled in `4ba38c6`.
+
+### personal plugins: /data/autoldr/manifest.txt
+
+To add a plugin without editing this repo's `manifest.txt`, drop a manifest at
+`/data/autoldr/manifest.txt` on the console. Its entries are **appended** to
+whatever the site manifest resolves to, in the order you wrote them, so you only
+list your own:
+
+```
+# /data/autoldr/manifest.txt
+ProsperoMgr.elf=local:/data/autoldr/plugins/ProsperoMgr.elf
+```
+
+Same format and same three target forms as the site manifest, `local:` included.
+It is read after the kernel stage, the first point the chain can read the
+console's filesystem at all. A missing file is the normal case and changes
+nothing; a file that exists but names something invalid fails the run, so a typo
+can't look like a successful run.
+
+Two consequences of appending worth knowing:
+
+- Your entries land **after** the site's, so `shadowmountplus` is no longer last.
+  It remounts `/system_ex`, and being last is what keeps the console from
+  panicking. The `?payloadDelay=` gap still applies between every entry.
+- The local file is a plain text read, not an ELF mapping, so it costs one small
+  buffer rather than a mapping — which is what the removed version got wrong.
+
+This is a different path from the one removed in `4ba38c6`. That one read a
+local *manifest* through the ELF-only mapper, so it could only ever fail, and it
+reserved 16MB per candidate before any payload loaded, which is what wedged the
+exploit. Local *payloads* never had the bug; they just had no way to be listed.
 
 ### etaHEN expires on 1 October
 
