@@ -227,7 +227,7 @@ body {
   opacity:1;
 }
 .sec.collapsed > .body,
-.sec.collapsed .log { max-height:0 !important; opacity:0; }
+.sec.collapsed #log { max-height:0 !important; opacity:0; }
 .sec.collapsed h2 { color:var(--dim2); }
 
 .sum { color:var(--grn-dim); }
@@ -289,7 +289,9 @@ h2 em { font-style:normal; letter-spacing:.04em; text-transform:none; }
   min-height:8rem;
 }
 #secLog h2 { flex:0 0 auto; }
-.log {
+/* The container carries both class "log" and id "log". Key all log layout and
+ * colour off the id so a "line log" message can never inherit the box. */
+#log {
   flex:1 1 auto;
   min-height:5rem;
   overflow-y:auto;
@@ -301,24 +303,21 @@ h2 em { font-style:normal; letter-spacing:.04em; text-transform:none; }
   scrollbar-width:thin;
   scrollbar-color:var(--line2) transparent;
 }
-/* one plain block line per entry, marker first, like the reference console.
-   No flex column and no fixed-gap timestamp, so no line reads as inset. */
-.log .line {
+#log .line {
   display:block;
   overflow-wrap:anywhere; word-break:break-word;
   white-space:normal;
 }
-.log .log { color:var(--dim); }
-.log .info { color:var(--txt); }
-.log .success { color:var(--grn); }
-.log .warning { color:var(--amb); }
-.log .error { color:var(--red); }
-.log .sys { color:var(--cyan); }
-/* keep the box's own scrollbar from being the PS5 WebView's chunky default */
-.log::-webkit-scrollbar, .summary::-webkit-scrollbar { width:8px; height:8px; }
-.log::-webkit-scrollbar-track, .summary::-webkit-scrollbar-track { background:var(--bg2); }
-.log::-webkit-scrollbar-thumb, .summary::-webkit-scrollbar-thumb { background:var(--line2); border-radius:4px; }
-.log::-webkit-scrollbar-thumb:hover, .summary::-webkit-scrollbar-thumb:hover { background:#3a3a3a; }
+#log .line.log { color:var(--dim); }
+#log .line.info { color:var(--txt); }
+#log .line.success { color:var(--grn); }
+#log .line.warning { color:var(--amb); }
+#log .line.error { color:var(--red); }
+#log .line.sys { color:var(--cyan); }
+#log::-webkit-scrollbar, .summary::-webkit-scrollbar { width:8px; height:8px; }
+#log::-webkit-scrollbar-track, .summary::-webkit-scrollbar-track { background:var(--bg2); }
+#log::-webkit-scrollbar-thumb, .summary::-webkit-scrollbar-thumb { background:var(--line2); border-radius:4px; }
+#log::-webkit-scrollbar-thumb:hover, .summary::-webkit-scrollbar-thumb:hover { background:#3a3a3a; }
 
 .note {
   flex:0 0 auto;
@@ -355,9 +354,9 @@ h2 em { font-style:normal; letter-spacing:.04em; text-transform:none; }
   .kv { padding:.25rem var(--gut); gap:0 .7rem; }
   .plist li { padding:.05rem var(--gut); }
   h2 { padding:.25rem var(--gut); }
-  .log { font-size:.78rem; line-height:1.45; padding:.2rem var(--gut); }
+  #log { font-size:.78rem; line-height:1.45; padding:.2rem var(--gut); }
   #secLog { min-height:6.5rem; }
-  .log { min-height:4.5rem; }
+  #log { min-height:4.5rem; }
 }
 
 @media (max-height:20rem) {
