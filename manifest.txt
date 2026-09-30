@@ -9,9 +9,9 @@
 #   2. a built-in fallback of the three bundled payloads
 #
 # Everything here is fetched over HTTP from this site. Console-local manifests
-# and /data/autoldr/plugins were tried and removed: reading a local file needed
-# a large mapping per candidate, and doing that before any payload loaded was
-# enough to wedge the exploit on console.
+# were tried and removed: reading a local file needed a large mapping per
+# candidate, and doing that before any payload loaded was enough to wedge the
+# exploit on console.
 #
 # Format: one "name=url" per line. Blank lines and lines starting with # are
 # ignored, as is anything after a # on a line. A bare "name" with no "=" is

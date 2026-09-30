@@ -269,7 +269,13 @@ window.writeLog = function (message, type, replace) {
    * it can keep emitting for a while. Stop rendering those, or the log grows
    * under a verdict that has already been reached. */
   if (runTerminal) return;
-  log(message, type === "success" ? "success" : type === "error" ? "error" : type);
+  /* An unrecognised level would land as a bare class name with no rule behind
+   * it, so map the ones the site uses onto the styles that exist. */
+  var level =
+    type === "success" || type === "error" || type === "warning" || type === "info" || type === "sys"
+      ? type
+      : "info";
+  log(message, level);
 };
 
 window.jb = {

@@ -89,13 +89,23 @@ python3 tools/send_elf.py payloads/JailbreakStore.elf <ps5-ip> 9021
   cap on its retries, so a WebKit exploit that never lands leaves the run
   pending forever. The site bounds it from the outside and fails the run instead
   of hanging silently.
-- **Nothing under `src/` or `offsets/` is modified.** It is all stock Relapse
-  `09f10f5`, verified byte-for-byte against the tag `vendor/relapse-09f10f5`.
-  An earlier one-line fix to an `aio_multiwait` timeout was reverted: it turned a
-  rare 2.8h stall into a stall on the normal path, hanging after
-  `Kernel: base 0x...`.
-- `manifest.txt` and `manifest.js` document the payload plan but nothing reads
-  them at runtime; the sends come from `kexp.js`'s own list.
+- **The kernel stage can hang.** `defuseAioGroups()` walks every armed AIO group
+  and clears it, and each group costs a lookup, two reads, and up to three
+  write-and-verify attempts through the ROP primitive. It has no bound of its
+  own, so a run that goes wrong can sit on `Kernel: checking aio groups` with the
+  page never reaching a verdict, which leaves the console unable to finish
+  rebooting. The site bounds the stage and reports the phase it stalled in.
+- **Offsets are per-firmware.** `offsets/` is stock Relapse `09f10f5` and must
+  stay; a version with no offset file cannot run.
+- Everything under `src/` is stock Relapse `09f10f5` except `main.js`, which
+  publishes the ROP handles and `boot.js`, which owns the manifest and timeouts.
+  `relapse_exploit.js`, `webkit.js`, `rop.js`, and `kexp.js` are byte-for-byte
+  against the tag `vendor/relapse-09f10f5`. An earlier one-line fix to an
+  `aio_multiwait` timeout was reverted: upstream waits 10ms via `tv_usec`, and
+  writing the value as `tv_sec` instead turned a rare 2.8h stall into a stall on
+  the normal path.
+- The payload list and spacing come from `manifest.txt`; `src/kexp.js`'s own
+  hardcoded list is unused.
 
 ## query flags
 
@@ -105,7 +115,9 @@ python3 tools/send_elf.py payloads/JailbreakStore.elf <ps5-ip> 9021
 | `?auto=1` | skip the start gate |
 | `?measure=1` | show the WebView viewport report |
 | `?webkitTimeout=N` | fail the webkit stage after N seconds (default 300) |
+| `?kernelTimeout=N` | fail the kernel stage after N seconds (default 240) |
 | `?payloadTimeout=N` | fail the payload stage after N seconds (default 120) |
+| `?payloadDelay=N` | seconds between payloads from the manifest (default 5) |
 
 ## running and deploying
 
@@ -123,6 +135,8 @@ chromium --headless --no-sandbox \
   --user-agent="Mozilla/5.0 (PlayStation 5/13.20) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Safari/605.1.15" \
   --virtual-time-budget=20000 --dump-dom \
   'http://127.0.0.1:8002/?auto=1&webkitTimeout=6'
+# force the kernel deadline to a short value to see the timeout path
+  'http://127.0.0.1:8002/?auto=1&webkitTimeout=300&kernelTimeout=3'
 ```
 
 The chain then genuinely runs and fails in the WebKit stage, which is enough to

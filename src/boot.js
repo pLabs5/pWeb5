@@ -76,18 +76,23 @@ function getWebKitBase() {
  * 0/5 with the log growing and never reach a verdict. Upstream gets away with
  * that because a human just reloads; here it means a UI that lies about being
  * stuck. Bound it from the outside instead of editing webkit.js. */
-function withDeadline(promise, ms, what) {
+function withDeadline(promise, ms, what, detail) {
   let timer;
-  /* `what` may be a function so a message that depends on runtime state - the
-   * phase the exploit last reported, say - is only built if it actually fires. */
-  const describe = () => (typeof what === "function" ? what() : what);
   return Promise.race([
     promise.finally(() => clearTimeout(timer)),
     new Promise((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error(describe() + " did not complete in " + Math.round(ms / 1000) + "s")),
-        ms,
-      );
+      timer = setTimeout(() => {
+        /* `detail` is deferred to the moment the deadline actually fires and is
+         * only appended if it yields something, so a stage that never reported a
+         * phase does not claim it stalled in "unknown". */
+        const phase = detail ? detail() : null;
+        const where = phase ? ", stalled after: " + phase : "";
+        reject(
+          new Error(
+            what + " did not complete in " + Math.round(ms / 1000) + "s" + where,
+          ),
+        );
+      }, ms);
     }),
   ]);
 }
@@ -221,10 +226,13 @@ async function resolveEntries() {
   } catch (e) {
     /* fall through to the default below */
   }
+  /* Must mirror the order in manifest.txt: kstuff first, then etaHEN on its own,
+   * then shadowmountplus last. Reordering here reintroduces the panic. */
+  window.writeLog("manifest: unavailable, using the built-in fallback", "warning");
   return [
-    { name: "kstuff.elf", url: "payloads/kstuff.elf" },
+    { name: "kstuff-lite.elf", url: "payloads/kstuff-lite-1.11B.elf" },
+    { name: "etahen.elf", url: "payloads/etaHEN-Oct1.elf" },
     { name: "shadowmountplus.elf", url: "payloads/shadowmountplus.elf" },
-    { name: "etaHEN.elf", url: "payloads/etaHEN.elf" },
   ];
 }
 
@@ -337,11 +345,10 @@ export async function boot() {
     return e;
   });
 
-  await withDeadline(
-    main(primitive),
-    kernelTimeout,
-    () => "the kernel stage, stalled after: " + lastKernelPhase(),
-  );
+    await withDeadline(main(primitive), kernelTimeout, "the kernel stage", () => {
+      const phase = lastKernelPhase();
+      return phase === "unknown" ? null : phase;
+    });
 
   if (!window.jb.chain || !window.jb.p)
     throw new Error("the kernel stage did not publish its ROP handles");
