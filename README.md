@@ -80,26 +80,35 @@ what wedged the exploit when this path was pulled in `4ba38c6`.
 ### personal plugins: /data/autoldr/manifest.txt
 
 To add a plugin without editing this repo's `manifest.txt`, drop a manifest at
-`/data/autoldr/manifest.txt` on the console. Its entries are **appended** to
-whatever the site manifest resolves to, in the order you wrote them, so you only
-list your own:
+`/data/autoldr/manifest.txt` on the console. It **replaces** the site manifest —
+your list, your order, your plugins:
 
 ```
 # /data/autoldr/manifest.txt
 ProsperoMgr.elf=local:/data/autoldr/plugins/ProsperoMgr.elf
+etahen.elf=payloads/etaHEN.elf
 ```
 
-Same format and same three target forms as the site manifest, `local:` included.
+Nothing from the site manifest is loaded once yours exists, so name anything you
+still want. Same format and same three target forms, `local:` included.
+
+**kstuff is the exception.** It always loads first, because it is the payload
+that makes the rest work, and you don't have to name it. The build is the
+firmware's choice: full kstuff up to and including 10.01, kstuff-lite above that.
+Name `kstuff.elf` or `kstuff-lite.elf` yourself and yours is used instead of that
+pick, which is how you pin a build.
+
 It is read after the kernel stage, the first point the chain can read the
 console's filesystem at all. A missing file is the normal case and changes
 nothing; a file that exists but names something invalid fails the run, so a typo
 can't look like a successful run.
 
-Two consequences of appending worth knowing:
+Two things worth knowing:
 
-- Your entries land **after** the site's, so `shadowmountplus` is no longer last.
-  It remounts `/system_ex`, and being last is what keeps the console from
-  panicking. The `?payloadDelay=` gap still applies between every entry.
+- Ordering is now yours. `shadowmountplus` remounts `/system_ex` and the console
+  panics when the mount- and network-touching payloads land close together, so
+  keep it last in your list. The `?payloadDelay=` gap still applies to every
+  entry.
 - The local file is a plain text read, not an ELF mapping, so it costs one small
   buffer rather than a mapping — which is what the removed version got wrong.
 

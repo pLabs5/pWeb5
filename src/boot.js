@@ -347,16 +347,62 @@ async function readTextFromDisk(path, p, chain) {
   }
 }
 
+/* kstuff is the one payload that always loads, and which build is firmware's
+ * call: full kstuff is supported up to and including 10.01, and kstuff-lite is
+ * the one for anything newer. A local manifest does not have to name it, and
+ * when it does, that line is used instead of this pick. */
+const KSTUFF = [
+  { max: [10, 1], name: "kstuff.elf", url: "payloads/kstuff.elf" },
+  { max: null, name: "kstuff-lite.elf", url: "payloads/kstuff-lite-1.11B.elf" },
+];
+const KSTUFF_NAME = /kstuff/i;
+
+function kstuffEntry() {
+  const version = String(window.fw_str || "");
+  const match = /^(\d+)\.(\d+)/.exec(version);
+  if (match) {
+    const current = [+match[1], +match[2]];
+    for (const build of KSTUFF) {
+      if (build.max === null || (current[0] < build.max[0] || (current[0] === build.max[0] && current[1] <= build.max[1])))
+        return { name: build.name, url: build.url, local: false };
+    }
+  }
+  /* Unknown firmware: the site rejects it outright later, so this only decides
+   * what to send first. The modern build is the safer guess. */
+  return { name: KSTUFF[1].name, url: KSTUFF[1].url, local: false };
+}
+
 /* A console-local manifest at LOCAL_MANIFEST_PATH is read after the kernel
- * stage and merged under the site's: local entries run after the remote ones, in
- * file order. Appended rather than replacing, so a local file can add a plugin
- * without having to restate the three the site already loads - and so a typo in
- * it cannot quietly take the jailbreak away.
+ * stage and REPLACES the site's manifest when it is there - it is the console
+ * owner's list, not an addition to it. Only kstuff is forced on top of it, so a
+ * local file picks its own plugins and their order without having to restate
+ * the jailbreak payload that has to go first regardless.
  *
  * Only reached once the chain can read the console's filesystem at all, which
  * is the same point the local: payload entries need. */
 async function resolveEntries(p, chain) {
-  let entries = null;
+  /* A missing or unreadable local manifest is not an error - it is the normal
+   * case for anyone who has not made one. Only a local file that parses but
+   * names something wrong fails the run, same as a bad line on the site. */
+  let localText = null;
+  try {
+    localText = await readTextFromDisk(LOCAL_MANIFEST_PATH, p, chain);
+  } catch (e) {
+    window.writeLog("manifest: " + LOCAL_MANIFEST_PATH + " unreadable: " + e.message, "warning");
+  }
+  if (localText !== null) {
+    const own = parseManifest(localText);
+    /* A kstuff line in the local manifest is the console owner's choice of
+     * build, so it wins and ours is not added on top - naming one is how you
+     * override the firmware pick. With none named, the firmware decides,
+     * because that payload has to land first either way. */
+    const named = own.filter((entry) => KSTUFF_NAME.test(entry.name));
+    const rest = own.filter((entry) => !KSTUFF_NAME.test(entry.name));
+    const kstuff = named.length ? named[0] : kstuffEntry();
+    window.writeLog("manifest: " + LOCAL_MANIFEST_PATH + " (console) replaces the site list, +" + rest.length +
+      (named.length ? ", kstuff named locally" : ", kstuff by firmware"), "info");
+    return [kstuff].concat(rest);
+  }
 
   let text = null;
   try {
@@ -372,37 +418,17 @@ async function resolveEntries(p, chain) {
     const parsed = parseManifest(text);
     if (parsed.length) {
       window.writeLog("manifest: manifest.txt (site)", "info");
-      entries = parsed;
+      return parsed;
     }
   }
-  if (entries === null) {
-    /* Must mirror the order in manifest.txt: kstuff first, then etaHEN on its
-     * own, then shadowmountplus last. Reordering here reintroduces the panic. */
-    window.writeLog("manifest: unavailable, using the built-in fallback", "warning");
-    entries = [
-      { name: "kstuff-lite.elf", url: "payloads/kstuff-lite-1.11B.elf", local: false },
-      { name: "etahen.elf", url: "payloads/etaHEN.elf", local: false },
-      { name: "shadowmountplus.elf", url: "payloads/shadowmountplus.elf", local: false },
-    ];
-  }
-
-  /* A missing or unreadable local manifest is not an error - it is the normal
-   * case for anyone who has not made one. Only a local file that parses but
-   * names something wrong fails the run, same as a bad line on the site. */
-  let localText = null;
-  try {
-    localText = await readTextFromDisk(LOCAL_MANIFEST_PATH, p, chain);
-  } catch (e) {
-    window.writeLog("manifest: " + LOCAL_MANIFEST_PATH + " unreadable: " + e.message, "warning");
-  }
-  if (localText !== null) {
-    const local = parseManifest(localText);
-    if (local.length) {
-      window.writeLog("manifest: " + LOCAL_MANIFEST_PATH + " (console) +" + local.length, "info");
-      entries = entries.concat(local);
-    }
-  }
-  return entries;
+  /* Must mirror the order in manifest.txt: kstuff first, then etaHEN on its own,
+   * then shadowmountplus last. Reordering here reintroduces the panic. */
+  window.writeLog("manifest: unavailable, using the built-in fallback", "warning");
+  return [
+    { name: "kstuff-lite.elf", url: "payloads/kstuff-lite-1.11B.elf", local: false },
+    { name: "etahen.elf", url: "payloads/etaHEN.elf", local: false },
+    { name: "shadowmountplus.elf", url: "payloads/shadowmountplus.elf", local: false },
+  ];
 }
 
 /* Send every entry in manifest order, waiting between them. etaHEN starts its
