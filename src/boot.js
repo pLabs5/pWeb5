@@ -116,9 +116,7 @@ async function getPrimitive(timeoutMs) {
  * ------------------------------------------------------------------ */
 
 const FS = {
-  READ: 0x003,
   WRITE: 0x004,
-  OPEN: 0x005,
   CLOSE: 0x006,
   SOCKET: 0x061,
   CONNECT: 0x062,
@@ -129,51 +127,6 @@ const PROT_RW = 0x3;
 const MAP_PRIVATE_ANON = 0x1002;
 const ELFDR_PORT = 9021;
 const CHUNK = 0x10000;
-const LOCAL_ROOT = "/data/autoldr";
-
-/* A path has to exist as a NUL-terminated string in ROP memory before it can
- * be handed to the kernel, and the primitive only writes 1-8 bytes at a time. */
-function writeCString(p, address, text) {
-  for (let i = 0; i < text.length; i++) p.write1(address.add32(i), text.charCodeAt(i) & 0xff);
-  p.write1(address.add32(text.length), 0);
-  return address;
-}
-
-function low(result) {
-  if (result === null || result === undefined) return -1;
-  return typeof result === "object" && result.low !== undefined ? result.low | 0 : result | 0;
-}
-
-/* Map a file that is already on the console. Same {base, size} shape the
- * sender wants, so local and remote payloads are interchangeable. */
-async function mapElfFromDisk(path, p, chain) {
-  const pathAddr = writeCString(p, p.malloc(path.length + 1, 1), path);
-
-  const fd = low(await chain.syscall(FS.OPEN, pathAddr, O_RDONLY, 0));
-  if (fd < 0) throw new Error("cannot open " + path + " on the console");
-
-  try {
-    /* Read to EOF in chunks straight into one mapping. Reserving a fixed
-     * ceiling keeps this to a single mmap; nothing is copied into JS. */
-    const capacity = 0x1000000; // 16 MiB ceiling per payload
-    const base = await chain.syscall(FS.MMAP, 0, capacity, PROT_RW, MAP_PRIVATE_ANON, -1, 0);
-    if (low(base) <= 0x10000) throw new Error("mmap failed for " + path);
-
-    let total = 0;
-    for (;;) {
-      const want = Math.min(CHUNK, capacity - total);
-      if (want <= 0) break;
-      const got = low(await chain.syscall(FS.READ, fd, base.add32(total), want));
-      if (got <= 0) break;
-      total += got;
-    }
-    if (total < 0x1000) throw new Error(path + " is too small to be an ELF");
-    if (p.read4(base) >>> 0 !== 0x464c457f) throw new Error(path + " is not an ELF");
-    return { base: base, size: total };
-  } finally {
-    await chain.syscall(FS.CLOSE, fd);
-  }
-}
 
 /* The network path, matching kexp's mapElf. */
 async function mapElfFromUrl(url, p, chain) {
@@ -235,23 +188,6 @@ async function sendMapped(name, payload, p, chain) {
   }
 }
 
-/* Read the console-side manifest. Only meaningful after the kernel stage,
- * because before it the page has no filesystem access at all. */
-async function readLocalManifest(p, chain) {
-  const candidates = [LOCAL_ROOT + "/manifest.txt", LOCAL_ROOT];
-  for (const path of candidates) {
-    try {
-      const payload = await mapElfFromDisk(path, p, chain);
-      let text = "";
-      for (let i = 0; i < payload.size; i++) text += String.fromCharCode(p.read8(payload.base.add32(i)) & 0xff);
-      if (text.trim()) return text;
-    } catch (e) {
-      /* not there, or unreadable: fall through to the next candidate */
-    }
-  }
-  return null;
-}
-
 function parseManifest(text) {
   const entries = [];
   for (const raw of String(text).split("\n")) {
@@ -260,32 +196,16 @@ function parseManifest(text) {
     const line = raw.replace(/#.*$/, "").trim();
     if (!line) continue;
     const eq = line.indexOf("=");
-    if (eq < 0) entries.push({ name: line, url: "payloads/" + line, local: false });
-    else {
-      const name = line.slice(0, eq).trim();
-      const target = line.slice(eq + 1).trim();
-      entries.push({
-        name: name,
-        url: target,
-        local: target.startsWith("/"),
-      });
-    }
+    if (eq < 0) entries.push({ name: line, url: "payloads/" + line });
+    else entries.push({ name: line.slice(0, eq).trim(), url: line.slice(eq + 1).trim() });
   }
   return entries;
 }
 
-/* Resolution order: the console's own manifest, then the one served by the
- * site, then the built-in default. A target beginning with "/" is a path on
- * the console; anything else is fetched from the site. */
-async function resolveEntries(p, chain) {
-  if (p && chain) {
-    const local = await readLocalManifest(p, chain);
-    const parsed = local ? parseManifest(local) : [];
-    if (parsed.length) {
-      window.writeLog("manifest: " + LOCAL_ROOT + "/manifest.txt", "info");
-      return parsed;
-    }
-  }
+/* Remote only for now. A console-local manifest was tried and pulled: it
+ * needed a 16MB mapping per candidate, twice, before any payload loaded, which
+ * was enough to wedge the exploit on console. See the README. */
+async function resolveEntries() {
   try {
     const response = await fetch("manifest.txt", { cache: "no-store" });
     if (response.ok) {
@@ -299,9 +219,9 @@ async function resolveEntries(p, chain) {
     /* fall through to the default below */
   }
   return [
-    { name: "kstuff.elf", url: "payloads/kstuff.elf", local: false },
-    { name: "shadowmountplus.elf", url: "payloads/shadowmountplus.elf", local: false },
-    { name: "etaHEN.elf", url: "payloads/etaHEN.elf", local: false },
+    { name: "kstuff.elf", url: "payloads/kstuff.elf" },
+    { name: "shadowmountplus.elf", url: "payloads/shadowmountplus.elf" },
+    { name: "etaHEN.elf", url: "payloads/etaHEN.elf" },
   ];
 }
 
@@ -310,7 +230,7 @@ async function resolveEntries(p, chain) {
  * the two must not be in flight at the same time - that combination is what
  * panicked the console. ?payloadDelay=N overrides the gap in seconds. */
 async function loadPayloads(p, chain) {
-  const entries = await resolveEntries(p, chain);
+  const entries = await resolveEntries();
   const query = new URLSearchParams(location.search);
   const delay = Number(query.get("payloadDelay") || 5) * 1000;
 
@@ -319,15 +239,17 @@ async function loadPayloads(p, chain) {
 
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
-    const source = entry.local ? entry.url : "payloads/" + entry.url.replace(/^payloads\//, "");
-    const payload = entry.local
-      ? await mapElfFromDisk(source, p, chain)
-      : await mapElfFromUrl(source, p, chain);
+    const source = "payloads/" + entry.url.replace(/^payloads\//, "");
+    window.writeLog("[" + (i + 1) + "/" + entries.length + "] fetching " + entry.name, "info");
+    const payload = await mapElfFromUrl(source, p, chain);
+    window.writeLog("[" + (i + 1) + "/" + entries.length + "] mapped " + entry.name + " (" + payload.size + " bytes)", "info");
     await sendMapped(entry.name, payload, p, chain);
     window.jb.mark("payload", entry.name + " sent");
     window.writeLog(entry.name + " sent", "success");
-    if (i < entries.length - 1 && delay > 0)
+    if (i < entries.length - 1 && delay > 0) {
+      window.writeLog("waiting " + delay / 1000 + "s before the next payload", "info");
       await new Promise((resolve) => setTimeout(resolve, delay));
+    }
   }
   return entries;
 }

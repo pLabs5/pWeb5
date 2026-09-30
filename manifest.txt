@@ -5,17 +5,17 @@
 #
 # Resolution order at runtime:
 #
-#   1. /data/autoldr/manifest.txt on the console, if it exists (highest priority)
-#   2. this file, fetched from the site origin
-#   3. a built-in fallback of the three bundled payloads
+#   1. this file, fetched from the site origin
+#   2. a built-in fallback of the three bundled payloads
+#
+# Everything here is fetched over HTTP from this site. Console-local manifests
+# and /data/autoldr/plugins were tried and removed: reading a local file needed
+# a large mapping per candidate, and doing that before any payload loaded was
+# enough to wedge the exploit on console.
 #
 # Format: one "name=url" per line. Blank lines and lines starting with # are
-# ignored. A bare "name" with no "=" is treated as payloads/<name>.
-#
-# A target beginning with "/" is a path on the PS5 itself and is read straight
-# from the console's filesystem into memory; anything else is fetched over HTTP
-# from this site. Either way the bytes go to elfldr without passing through the
-# page, so a local payload costs no more than a remote one.
+# ignored, as is anything after a # on a line. A bare "name" with no "=" is
+# treated as payloads/<name>.
 #
 # ORDER MATTERS, and the gap between payloads matters more.
 #
@@ -23,10 +23,6 @@
 # /system_ex. Sending those two close together panicked the console, so the
 # loader waits ?payloadDelay= seconds (default 5) between entries. If you add
 # payloads, keep the ones that touch mounts or network services apart.
-#
-# To load your own, drop an ELF on the console and point at it, e.g.:
-#
-#   /data/autoldr/plugins/mypayload.elf=/data/autoldr/plugins/mypayload.elf
 
 # --- default: kstuff-lite, for firmware above 10.01 ---
 kstuff-lite.elf=payloads/kstuff-lite-1.11B.elf
