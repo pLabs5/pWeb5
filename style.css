@@ -298,30 +298,30 @@ h2 em { font-style:normal; letter-spacing:.04em; text-transform:none; }
   overflow-y:auto;
   overflow-x:hidden;
   -webkit-overflow-scrolling:touch;
-  padding:.35rem var(--gut);
+  padding:.25rem var(--gut);
   font-size:.82rem;
-  line-height:1.55;
+  line-height:1.45;
+  scrollbar-width:thin;
+  scrollbar-color:var(--line2) transparent;
 }
-.log .line { display:flex; gap:.5rem; }
-/* fixed-width timestamps so the message column lines up; requires the
-   monospace face to actually be monospace, hence the webfont above */
-.log .ts { color:#3a3a3a; flex:0 0 auto; }
-/* overflow-wrap:anywhere is Safari 15.4+. word-break:break-word is the old
-   spelling and does the same job on the PS5's WebKit, so long hex and error
-   text wraps instead of forcing the page wide. */
-.log .tx {
-  color:var(--dim);
+/* one plain block line per entry, marker first, like the reference console.
+   No flex column and no fixed-gap timestamp, so no line reads as inset. */
+.log .line {
+  display:block;
   overflow-wrap:anywhere; word-break:break-word;
-  word-break:break-word;
-  white-space:pre-wrap;
-  min-width:0;
-  flex:1 1 auto;
+  white-space:normal;
 }
-.log .info .tx { color:var(--txt); }
-.log .success .tx { color:var(--grn); }
-.log .warning .tx { color:var(--amb); }
-.log .error .tx { color:var(--red); }
-.log .sys .tx { color:var(--cyan); }
+.log .log { color:var(--dim); }
+.log .info { color:var(--txt); }
+.log .success { color:var(--grn); }
+.log .warning { color:var(--amb); }
+.log .error { color:var(--red); }
+.log .sys { color:var(--cyan); }
+/* keep the box's own scrollbar from being the PS5 WebView's chunky default */
+.log::-webkit-scrollbar, .summary::-webkit-scrollbar { width:8px; height:8px; }
+.log::-webkit-scrollbar-track, .summary::-webkit-scrollbar-track { background:var(--bg2); }
+.log::-webkit-scrollbar-thumb, .summary::-webkit-scrollbar-thumb { background:var(--line2); border-radius:4px; }
+.log::-webkit-scrollbar-thumb:hover, .summary::-webkit-scrollbar-thumb:hover { background:#3a3a3a; }
 
 .note {
   flex:0 0 auto;

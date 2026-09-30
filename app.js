@@ -202,19 +202,30 @@ function initEnv() {
       document.documentElement.scrollHeight, "sys");
 }
 
-/* log */
-function stamp() {
-  var d = new Date();
-  function p(n) { return (n < 10 ? "0" : "") + n; }
-  return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+/* log. Each line is one flush div of plain text, marker first, exactly like
+ * the reference console in /tmp/opencode/Relapse-Exploit (writeLog there
+ * prints "[+] message"). The old per-line timestamp column pushed every
+ * message into a fixed-gap flex row, which read as "indented and spaced
+ * apart" - drop it and let the message sit flush at the left edge. */
+function logMarker(type) {
+  return type === "error" ? "-"
+       : type === "warning" ? "!"
+       : type === "info" || type === "success" ? "+"
+       : "*";
 }
 
-function log(msg, type) {
+var logQueue = [];
+var logFlushTimer = null;
+/* A run dumps whole stages in the same frame (the payload tail especially),
+ * which scrolls the log faster than it can be read. Pace bursts at one line
+ * per interval so the log keeps up with the on-screen popups instead of
+ * racing past them. Idle lines still land immediately. */
+var LOG_STEP_MS = 100;
+
+function renderLogLine(entry) {
   var el = document.createElement("div");
-  el.className = "line " + (type || "log");
-  var ts = document.createElement("span"); ts.className = "ts"; ts.textContent = stamp();
-  var tx = document.createElement("span"); tx.className = "tx"; tx.textContent = msg;
-  el.appendChild(ts); el.appendChild(tx);
+  el.className = "line " + (entry.level || "log");
+  el.textContent = "[" + logMarker(entry.level) + "] " + entry.msg;
   var box = $("log");
   var atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 24;
   box.appendChild(el);
@@ -222,8 +233,27 @@ function log(msg, type) {
 
   logLines++;
   $("logCount").textContent = logLines;
-  if (type === "error") runStats.errors++;
-  if (type === "warning") runStats.warnings++;
+  if (entry.level === "error") runStats.errors++;
+  if (entry.level === "warning") runStats.warnings++;
+}
+
+function flushLogQueue() {
+  logFlushTimer = null;
+  while (logQueue.length) {
+    var entry = logQueue.shift();
+    renderLogLine(entry);
+    if (logQueue.length) {
+      logFlushTimer = setTimeout(flushLogQueue, LOG_STEP_MS);
+      return;
+    }
+  }
+}
+
+function log(msg, type) {
+  logQueue.push({ msg: String(msg), level: type || "log" });
+  if (logFlushTimer !== null) return;
+  renderLogLine(logQueue.shift());
+  if (logQueue.length) logFlushTimer = setTimeout(flushLogQueue, LOG_STEP_MS);
 }
 
 /* steps */
@@ -676,7 +706,7 @@ function init() {
 
   $("copyLog").addEventListener("click", function () {
     var text = [].map.call($("log").childNodes, function (n) {
-      return n.querySelector(".ts").textContent + "  " + n.querySelector(".tx").textContent;
+      return n.textContent;
     }).join("\n");
     if (navigator.clipboard) navigator.clipboard.writeText(text);
     log("log copied to clipboard", "info");

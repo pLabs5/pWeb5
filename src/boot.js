@@ -254,10 +254,8 @@ async function loadPayloads(p, chain) {
     const source = "payloads/" + entry.url.replace(/^payloads\//, "");
     window.writeLog("[" + (i + 1) + "/" + entries.length + "] fetching " + entry.name, "info");
     const payload = await mapElfFromUrl(source, p, chain);
-    window.writeLog("[" + (i + 1) + "/" + entries.length + "] mapped " + entry.name + " (" + payload.size + " bytes)", "info");
     await sendMapped(entry.name, payload, p, chain);
     window.jb.mark("payload", entry.name + " sent");
-    window.writeLog(entry.name + " sent", "success");
     if (i < entries.length - 1 && delay > 0) {
       window.writeLog("waiting " + delay / 1000 + "s before the next payload", "info");
       await new Promise((resolve) => setTimeout(resolve, delay));
