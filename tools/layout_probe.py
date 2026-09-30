@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render draft/index.html headless at several sizes and dump layout metrics.
+"""Render index.html headless at several sizes and dump layout metrics.
 
 Chromium can screenshot but we need numbers, so inject a measuring script into
 a copy of the page and read the results back out of the DOM.

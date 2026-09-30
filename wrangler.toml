@@ -1,6 +1,7 @@
 name = "ps5-jailbreak-store"
 compatibility_date = "2026-08-12"
 
-[site]
-bucket = "./"
-pages_build_output_dir = "./"
+# Workers with static assets (wrangler 4 no longer creates Pages projects).
+# dist/ is built by tools/build.sh so .git and tools/ stay off the public URL.
+[assets]
+directory = "./dist"

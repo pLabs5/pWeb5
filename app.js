@@ -80,12 +80,68 @@ var stageOnce = [];
 var sentCount = 0;
 var runStats = { errors: 0, warnings: 0, bytes: 0 };
 
-/* firmware */
-var isPS5 = navigator.userAgent.indexOf("PlayStation 5") !== -1;
-var m = /PlayStation 5\/(\d+\.\d+)/.exec(navigator.userAgent);
-var fw = m ? m[1] : "";
+/* ---------- console + firmware detection ----------
+ *
+ * The vendored src/firmware.js hard-rejects unless the UA contains the literal
+ * "PlayStation 5" and matches /PlayStation 5\/(\d+\.\d+)/, and its version must
+ * appear in a fixed 32-entry list. Real consoles do not all match that: the UA
+ * format varies by region and firmware, and any version outside the list is
+ * refused outright. So the globals it publishes are superseded here rather than
+ * editing the vendored file. app.js is a classic script and boot.js is a module,
+ * so this runs before boot() reads window.fw_str / window.firmware.
+ */
 var q = new URLSearchParams(location.search);
-if (q.get("fw")) fw = q.get("fw");
+
+/* Offsets are named with a two-digit minor, so a UA that reports "13.2" has to
+ * become "13.20" or offsets/13.2.js is requested and 404s. */
+function normalizeFw(v) {
+  var m = /^(\d+)\.(\d+)$/.exec(String(v || ""));
+  if (!m) return String(v || "");
+  return m[1] + "." + (m[2].length < 2 ? m[2] + "0" : m[2]);
+}
+
+/* Deliberately loose: matches "PlayStation 5/13.20", "PS5/13.20", and variants
+ * with other text between the product name and the number. */
+var UA_FW = /(?:playstation\s*5|ps5)[^0-9]{0,12}(\d+\.\d+)/i;
+var UA_CONSOLE = /playstation|ps5|ps4/i;
+
+function detectFw() {
+  var override = q.get("fw");
+  if (override) return { fw: normalizeFw(override), source: "?fw=", console: true };
+
+  var m = UA_FW.exec(navigator.userAgent);
+  if (m) return { fw: normalizeFw(m[1]), source: "user agent", console: true };
+
+  /* No version in the UA, but the UA still looks like a console. Do not refuse:
+     let the chain try, and fail on the missing offsets file with a message that
+     says which firmware it was looking for. */
+  if (UA_CONSOLE.test(navigator.userAgent))
+    return { fw: "", source: "user agent, no version", console: true };
+
+  return { fw: "", source: "none", console: false };
+}
+
+var det = detectFw();
+var fw = det.fw;
+var fwSource = det.source;
+var isPS5 = det.console;
+
+/* Take over from src/firmware.js. The supported-version list is intentionally
+   not enforced: offsets only exist for the versions upstream shipped, so an
+   unlisted version will fail at offsets/<fw>.js, which reports the real
+   reason. Refusing up front would also reject a console whose UA simply did not
+   parse. */
+window.fw_str = fw;
+window.firmware = {
+  rejection() {
+    if (fw) return null;
+    return q.get("fw")
+      ? "FW " + q.get("fw") + " is not a known version"
+      : "could not read the firmware version from the user agent - " +
+        "append ?fw=13.20 to set it explicitly";
+  },
+  overridden: true,
+};
 
 function viewport() {
   return window.innerWidth + "x" + window.innerHeight +
@@ -122,8 +178,10 @@ function initEnv() {
   if (!isPS5 && !q.get("fw")) fw = "13.20";
 
   $("bootStatus").innerHTML = isPS5
-    ? "ps5 " + (fw || "?") + " detected<span class=cur>_</span>"
-    : "preview — no ps5 ua<span class=cur>_</span>";
+    ? (fw
+        ? "ps5 " + fw + " detected (" + fwSource + ")<span class=cur>_</span>"
+        : "ps5 detected, firmware unknown — add ?fw=13.20<span class=cur>_</span>")
+    : "preview — no ps5 user agent<span class=cur>_</span>";
   $("fwBadge").textContent = "FW " + (fw || "--");
   $("kView").textContent = viewport();
   $("kPayload").textContent = "--";
@@ -133,9 +191,13 @@ function initEnv() {
 
   log("webview " + viewport() + (isPS5 ? "" : " (preview)"), "sys");
   log("ua " + navigator.userAgent, "sys");
-  log("fw " + fw + (useFullKstuff(fw)
-    ? " <= 10.01, full kstuff supported"
-    : " > 10.01, full kstuff unsupported, default kstuff-lite"), "sys");
+  log("fw " + (fw || "unknown") + " from " + fwSource, isPS5 && !fw ? "warning" : "sys");
+  if (isPS5 && !fw)
+    log("no version parsed; append ?fw=<version> to select offsets manually", "warning");
+  if (fw)
+    log("kstuff: " + (useFullKstuff(fw)
+      ? "<= 10.01, full kstuff supported"
+      : "> 10.01, full kstuff unsupported, default kstuff-lite"), "sys");
   log("document " + document.documentElement.scrollWidth + "x" +
       document.documentElement.scrollHeight, "sys");
 }
@@ -335,6 +397,17 @@ function finish(ok, why) {
     ? (sentCount + " payload(s) delivered — close this window")
     : (why || "chain did not complete");
 
+  /* The installer only works once elfldr is actually listening, so it is tied
+     to a successful run. On a failed run it stays hidden rather than offering a
+     button that cannot work. */
+  $("offer").classList.toggle("hidden", !ok);
+  if (ok) {
+    $("install").disabled = false;
+    $("install").textContent = "APPLY TO PS STORE";
+    $("offerNote").textContent =
+      "reboots nothing on its own — a PS5 reboot is needed for the tile to change";
+  }
+
   var names = payloadEls.map(function (p) { return p.name; });
   $("doneSummary").textContent =
     "firmware   " + (fw || "?") + "\n" +
@@ -497,11 +570,70 @@ function start() {
     $("bootStatus").textContent = "this site only runs on a PlayStation 5";
     $("bootStatus").classList.add("err");
     $("led").className = "led err";
+    $("goWrap").classList.add("hidden");
+    $("goNote").classList.add("hidden");
     return;
   }
 
+  /* The chain sprays the moment it runs, so it takes a deliberate click rather
+     than firing on load. ?auto=1 skips the gate - the headless chain probe
+     and the on-console retest both use it. */
+  if (q.get("auto") === "1") { launch(); return; }
+  $("go").addEventListener("click", launch);
+}
+
+function launch() {
+  $("goWrap").classList.add("hidden");
+  $("goNote").classList.add("hidden");
   begin();
   runChain();
+}
+
+/* ---------- the PS Store installer offer ---------- */
+/* Delivers payloads/JailbreakStore.elf to elfldr, which rewrites the MMS
+ * databases: it renames NPXS40047 and repoints its DEEPLINK_URI at this page.
+ * The console needs a reboot afterwards for the tile to change.
+ *
+ * This is a plain no-cors POST rather than the syscall socket kexp.js uses. The
+ * chain's p/chain handles live inside the ROP worker and are not reachable from
+ * here without editing vendored main.js. Browsers treat http://127.0.0.1 as
+ * potentially trustworthy so the mixed-content rule does not apply, but that
+ * exemption is not guaranteed on the PS5's WebView - if this reports a failure
+ * on hardware, send the ELF from a PC instead. */
+function installStoreHijack() {
+  var btn = $("install");
+  var note = $("offerNote");
+  btn.disabled = true;
+  btn.textContent = "SENDING...";
+  note.textContent = "transferring JailbreakStore.elf to elfldr :9021";
+
+  fetch("payloads/JailbreakStore.elf")
+    .then(function (r) {
+      if (!r.ok) throw new Error("download HTTP " + r.status);
+      return r.arrayBuffer();
+    })
+    .then(function (buf) {
+      note.textContent = "sending " + buf.byteLength.toLocaleString() + " bytes";
+      return fetch("http://127.0.0.1:9021/", {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: buf
+      });
+    })
+    .then(function () {
+      btn.textContent = "APPLIED";
+      note.textContent = "reboot the PS5 - the tile becomes \"Jailbreak Store\" and opens this page";
+      log("JailbreakStore.elf sent to elfldr :9021", "success");
+      log("PS Store tile repointed; a PS5 reboot is required", "info");
+    })
+    .catch(function (err) {
+      var why = err && err.message ? err.message : String(err);
+      btn.disabled = false;
+      btn.textContent = "RETRY";
+      note.textContent = "send failed: " + why + " - send the ELF from a PC instead";
+      log("store install failed: " + why, "error");
+    });
 }
 
 function init() {
@@ -529,7 +661,8 @@ function init() {
     this.textContent = hidden ? "hide" : "show";
   });
 
-  $("again").addEventListener("click", start);
+  $("again").addEventListener("click", launch);
+  $("install").addEventListener("click", installStoreHijack);
   $("viewRun").addEventListener("click", function () {
     /* dismiss the verdict so the finished run (log, queue, stages) is visible */
     $("done").classList.add("hidden");

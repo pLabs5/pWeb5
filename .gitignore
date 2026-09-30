@@ -20,3 +20,9 @@ __pycache__/
 
 # -- local probes -- #
 /_chainprobe.html*
+/_gateprobe.html*
+/_globprobe.html*
+/_probe.html
+
+# -- build output -- #
+/dist/

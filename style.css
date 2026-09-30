@@ -36,10 +36,30 @@ html {
 
 html, body { height:100%; }
 
+/* Self-hosted rather than relying on the system stack. The PS5's WebView has
+   none of the usual console names (ui-monospace, Menlo, Consolas) installed and
+   falls through to its own default, which is not a monospace face and does not
+   line up in a log. Shipping the font makes the console, a desktop and the
+   local preview all render identically. */
+@font-face {
+  font-family:"JB Mono";
+  src:url("fonts/DejaVuSansMono.ttf") format("truetype");
+  font-weight:400;
+  font-style:normal;
+  font-display:swap;
+}
+@font-face {
+  font-family:"JB Mono";
+  src:url("fonts/DejaVuSansMono-Bold.ttf") format("truetype");
+  font-weight:700;
+  font-style:normal;
+  font-display:swap;
+}
+
 body {
   background:var(--bg);
   color:var(--txt);
-  font-family:ui-monospace,"DejaVu Sans Mono",Menlo,Consolas,monospace;
+  font-family:"JB Mono",ui-monospace,monospace;
   font-size:1rem;
   line-height:1.5;
   -webkit-font-smoothing:none;
@@ -60,6 +80,30 @@ body {
 }
 .lnk:hover, .lnk:focus-visible { color:var(--grn); outline:none; }
 
+/* the start gate and the store installer share one treatment: this is the only
+   control on the site that starts something irreversible, so it reads as solid
+   rather than as a text link */
+.go {
+  background:transparent; color:var(--grn); cursor:pointer;
+  border:1px solid var(--grn); border-radius:2px;
+  font:inherit; font-size:1.05rem; font-weight:700; letter-spacing:.22em;
+  padding:.7rem 1.9rem; margin:.3rem 0;
+}
+.go:hover, .go:focus-visible { background:var(--grn); color:var(--bg); outline:none; }
+.go:disabled { border-color:var(--dim); color:var(--dim); cursor:default; background:transparent; }
+
+/* ---------- post-run offer ---------- */
+.offer {
+  margin:1.4rem auto 0; max-width:34rem; text-align:left;
+  border:1px solid var(--dim); border-radius:2px; padding:1rem 1.1rem;
+}
+.offerhead {
+  color:var(--amb); font-size:.8rem; letter-spacing:.16em; margin:0 0 .55rem;
+}
+.offerbody { color:var(--dim); font-size:.88rem; line-height:1.5; margin:0 0 .3rem; }
+.offerbody b { color:var(--grn); font-weight:400; }
+.bootline.note { font-size:.8rem; opacity:.8; }
+
 /* ---------- screens ---------- */
 /* min-height first for old parsers, dvh so mobile-style viewports behave */
 .screen { min-height:100vh; min-height:100dvh; width:100%; }
@@ -77,6 +121,7 @@ body {
   font-weight:700;
   text-shadow:0 0 6px rgba(51,255,119,.35);
   overflow-x:auto;
+  max-width:100%;
 }
 
 .bootline { color:var(--dim); font-size:.92rem; margin-top:.7rem; }
@@ -94,7 +139,7 @@ body {
   text-align:left;
   border:1px solid var(--line); background:var(--bg2);
   max-width:26rem; margin-left:auto; margin-right:auto;
-  white-space:pre-wrap; overflow-wrap:anywhere;
+  white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;
   max-height:40vh; overflow-y:auto;
 }
 .summary b { color:var(--grn); font-weight:400; }
@@ -172,7 +217,7 @@ body {
   background:var(--bg2);
 }
 .rowhead .pct { color:var(--txt); }
-.rowhead .now { color:var(--cyan); text-align:right; overflow-wrap:anywhere; }
+.rowhead .now { color:var(--cyan); text-align:right; overflow-wrap:anywhere; word-break:break-word; }
 
 /* ---------- collapsible sections ---------- */
 .sec { flex:0 0 auto; border-bottom:1px solid var(--line); overflow:hidden; }
@@ -208,7 +253,7 @@ body {
   border-bottom:1px solid var(--line);
 }
 .kv > span:nth-child(odd) { color:var(--dim2); }
-.kv > span:nth-child(even) { color:var(--txt); text-align:right; overflow-wrap:anywhere; }
+.kv > span:nth-child(even) { color:var(--txt); text-align:right; overflow-wrap:anywhere; word-break:break-word; }
 .kv #kPort, .kv #kSource { color:var(--dim); }
 .kv #kPort.ok { color:var(--grn); }
 
@@ -232,7 +277,7 @@ h2 em { font-style:normal; letter-spacing:.04em; text-transform:none; }
   width:.42rem; height:.42rem; border-radius:50%;
   background:var(--dim2); flex:0 0 auto;
 }
-.plist .pname { flex:1 1 auto; overflow-wrap:anywhere; }
+.plist .pname { flex:1 1 auto; overflow-wrap:anywhere; word-break:break-word; }
 .plist em { font-style:normal; color:var(--dim2); font-size:.82rem; white-space:nowrap; }
 .plist li.sent i { background:var(--grn); }
 .plist li.sent .pname, .plist li.sent em { color:var(--grn); }
@@ -251,14 +296,27 @@ h2 em { font-style:normal; letter-spacing:.04em; text-transform:none; }
   flex:1 1 auto;
   min-height:5rem;
   overflow-y:auto;
+  overflow-x:hidden;
   -webkit-overflow-scrolling:touch;
   padding:.35rem var(--gut);
   font-size:.82rem;
   line-height:1.55;
 }
 .log .line { display:flex; gap:.5rem; }
+/* fixed-width timestamps so the message column lines up; requires the
+   monospace face to actually be monospace, hence the webfont above */
 .log .ts { color:#3a3a3a; flex:0 0 auto; }
-.log .tx { color:var(--dim); overflow-wrap:anywhere; white-space:pre-wrap; min-width:0; }
+/* overflow-wrap:anywhere is Safari 15.4+. word-break:break-word is the old
+   spelling and does the same job on the PS5's WebKit, so long hex and error
+   text wraps instead of forcing the page wide. */
+.log .tx {
+  color:var(--dim);
+  overflow-wrap:anywhere; word-break:break-word;
+  word-break:break-word;
+  white-space:pre-wrap;
+  min-width:0;
+  flex:1 1 auto;
+}
 .log .info .tx { color:var(--txt); }
 .log .success .tx { color:var(--grn); }
 .log .warning .tx { color:var(--amb); }
