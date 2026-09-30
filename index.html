@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Jailbreak Store</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="boot" class="screen center">
+  <div class="boot-inner">
+    <pre class="ascii">
+ ██╗██╗  ██╗ ██████╗ ██╗██╗
+ ██║██║  ██║██╔══██╗██║██║
+ ██║██║  ██║██████╔╝██║██║
+ ██║██║  ██║██╔═══╝ ██║██║
+ ██║╚█████╔╝██║     ██║███████╗
+ ╚═╝ ╚═════╝ ╚═╝     ╚═╝╚══════╝</pre>
+    <p class="bootline" id="bootStatus">probing console<span class="cur">_</span></p>
+  </div>
+</div>
+
+<div id="main" class="screen hidden">
+
+  <header class="bar">
+    <span class="tag">JAILBREAK STORE</span>
+    <span class="led" id="led"></span>
+    <span class="fw" id="fwBadge">FW --</span>
+  </header>
+
+  <div class="prog"><i id="barFill"></i></div>
+
+  <div class="rowhead">
+    <span class="pct" id="pctLabel">0%</span>
+    <span class="now" id="nowLabel">starting</span>
+  </div>
+
+  <section class="sec" id="secStages">
+    <h2>stages <em>
+      <span class="sum" id="sumStages">0/4</span>
+      <button class="lnk tg" data-tg="secStages" type="button" aria-label="toggle stages">–</button>
+    </em></h2>
+    <div class="body" id="bodyStages">
+      <div class="step" id="stage-1"><i>&gt;</i><span class="what">webkit</span><span class="stat" id="s1">wait</span></div>
+      <div class="step" id="stage-2"><i>&gt;</i><span class="what">kernel</span><span class="stat" id="s2">wait</span></div>
+      <div class="step" id="stage-3"><i>&gt;</i><span class="what">elfldr</span><span class="stat" id="s3">wait</span></div>
+      <div class="step" id="stage-4"><i>&gt;</i><span class="what">autoload</span><span class="stat" id="s4">wait</span></div>
+    </div>
+  </section>
+
+  <section class="sec" id="secSession">
+    <h2>session <em>
+      <span class="sum" id="sumSession">resolving</span>
+      <button class="lnk tg" data-tg="secSession" type="button" aria-label="toggle session">–</button>
+    </em></h2>
+    <div class="body" id="bodySession">
+      <div class="kv">
+        <span>payloads</span><span id="kPayload">--</span>
+        <span>manifest</span><span id="kSource">--</span>
+        <span>elfldr</span><span id="kPort">not listening</span>
+        <span>elapsed</span><span id="kTime">0.0s</span>
+        <span>viewport</span><span id="kView">--</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec collapsed" id="secQueue">
+    <h2>payload queue <em>
+      <span class="sum" id="srcBadge">resolving</span>
+      <button class="lnk tg" data-tg="secQueue" type="button" aria-label="toggle payload queue">–</button>
+    </em></h2>
+    <div class="body" id="bodyQueue">
+      <ul class="plist" id="plist">
+        <li><i></i><span class="pname">resolving<span class="cur">_</span></span><em></em></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="sec" id="secLog">
+    <h2>log <em>
+      <span class="sum" id="logCount">0</span>
+      <button id="copyLog" class="lnk" type="button">copy</button> &middot;
+      <button id="toggleLog" class="lnk" type="button">hide</button> &middot;
+      <button class="lnk tg" data-tg="secLog" type="button" aria-label="toggle log">–</button>
+    </em></h2>
+    <div class="log" id="log"></div>
+  </section>
+
+  <p class="note">tap-to-run only. boot-time autostart needs a private elfldr
+  on :9020, which kstuff-lite does not provide.</p>
+
+</div>
+
+<div id="done" class="screen center hidden">
+  <div class="boot-inner">
+    <p class="verdict" id="doneTitle">JAILBROKEN</p>
+    <p class="bootline" id="doneSub">kstuff-lite + etaHEN loaded</p>
+    <pre class="summary" id="doneSummary"></pre>
+    <p class="bootline"><button id="viewRun" class="lnk" type="button">[ view run ]</button> &middot; <button id="again" class="lnk" type="button">[ run again ]</button></p>
+  </div>
+</div>
+
+<div id="measure" class="screen hidden">
+  <div class="boot-inner">
+    <h2 class="mhead">VIEWPORT PROBE</h2>
+    <pre class="mout" id="mOut"></pre>
+    <p class="bootline" id="pState">reporting to host<span class="cur">_</span></p>
+  </div>
+</div>
+
+<iframe id="exploit" title="exploit"></iframe>
+<script src="manifest.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
