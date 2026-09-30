@@ -17,3 +17,6 @@ __pycache__/
 
 # -- file manager -- #
 .hidden
+
+# -- local probes -- #
+/_chainprobe.html*

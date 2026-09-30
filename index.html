@@ -38,14 +38,15 @@
 
   <section class="sec" id="secStages">
     <h2>stages <em>
-      <span class="sum" id="sumStages">0/4</span>
+      <span class="sum" id="sumStages">0/5</span>
       <button class="lnk tg" data-tg="secStages" type="button" aria-label="toggle stages">–</button>
     </em></h2>
     <div class="body" id="bodyStages">
       <div class="step" id="stage-1"><i>&gt;</i><span class="what">webkit</span><span class="stat" id="s1">wait</span></div>
-      <div class="step" id="stage-2"><i>&gt;</i><span class="what">kernel</span><span class="stat" id="s2">wait</span></div>
-      <div class="step" id="stage-3"><i>&gt;</i><span class="what">elfldr</span><span class="stat" id="s3">wait</span></div>
-      <div class="step" id="stage-4"><i>&gt;</i><span class="what">autoload</span><span class="stat" id="s4">wait</span></div>
+      <div class="step" id="stage-2"><i>&gt;</i><span class="what">rop worker</span><span class="stat" id="s2">wait</span></div>
+      <div class="step" id="stage-3"><i>&gt;</i><span class="what">kernel</span><span class="stat" id="s3">wait</span></div>
+      <div class="step" id="stage-4"><i>&gt;</i><span class="what">elfldr</span><span class="stat" id="s4">wait</span></div>
+      <div class="step" id="stage-5"><i>&gt;</i><span class="what">autoload</span><span class="stat" id="s5">wait</span></div>
     </div>
   </section>
 
@@ -110,7 +111,22 @@
 </div>
 
 <iframe id="exploit" title="exploit"></iframe>
+
+<!-- The exploit chain, in upstream load order. These are classic scripts
+     because src/main.js, src/rop.js and src/utils/syscalls.js all rely on
+     putting globals in place for the later ES modules. main.js reads
+     window.fw_str and appends offsets/<fw>.js itself. -->
+<script src="src/firmware.js"></script>
+<script src="src/main.js"></script>
+<script src="src/rop.js"></script>
+<script src="src/utils/syscalls.js"></script>
+
+<!-- UI. Defines window.writeLog and window.jb, which is what all of the
+     exploit code above reports through, and drives the stages. -->
 <script src="manifest.js"></script>
 <script src="app.js"></script>
+
+<!-- Module, so it runs after the classic scripts above are in place. -->
+<script type="module" src="src/boot.js"></script>
 </body>
 </html>

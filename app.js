@@ -1,9 +1,12 @@
-/* Mock driver for the Jailbreak Store UI.
+/* UI driver for the Jailbreak Store.
  *
- * Real mode contract (next step): the exploit iframe runs the patched Relapse
- * chain and posts {type:"wkal", kind:"log"|"autoload", ok, bytes, why}.
- * This file only consumes that contract. Without ?real=1 it replays a scripted
- * run so the UI can be reviewed on a PC first.
+ * This file owns no exploit logic. It defines the two globals that the
+ * upstream chain reports through - window.writeLog and window.jb - and turns
+ * their output into the stage list, progress bar and log. The chain itself is
+ * the unmodified Relapse 09f10f5 code under src/, called by src/boot.js.
+ *
+ * Run it with no arguments on a PS5. On a desktop browser it refuses, because
+ * there is no WebKit to exploit and no console to send payloads to.
  */
 "use strict";
 
@@ -11,9 +14,62 @@ var $ = function (id) { return document.getElementById(id); };
 
 var STAGES = [
   { el: "stage-1", txt: "s1", name: "webkit" },
-  { el: "stage-2", txt: "s2", name: "kernel" },
-  { el: "stage-3", txt: "s3", name: "elfldr" },
-  { el: "stage-4", txt: "s4", name: "autoload" }
+  { el: "stage-2", txt: "s2", name: "rop worker" },
+  { el: "stage-3", txt: "s3", name: "kernel" },
+  { el: "stage-4", txt: "s4", name: "elfldr" },
+  { el: "stage-5", txt: "s5", name: "autoload" }
+];
+
+/* Where each upstream reporter's output belongs. The chain emits its own
+ * tag strings, so rather than patching it we map the tags onto stages. */
+var TAG_STAGE = {
+  "WebKit": 0,
+  "Attempt": 0,
+  "Retry": 0,
+  "leak_addr": 0,
+  "host_addr": 0,
+  "holder_addr": 0,
+  "fake_addr": 0,
+  "view_vector": 0,
+  "function_addr": 0,
+  "executable_addr": 0,
+  "native_function": 0,
+  "native_constructor": 0,
+  "Worker": 1,
+  "Worker chain": 1,
+  "Kernel": 2,
+  "oid": 2,
+  "oid steering": 2,
+  "oid_churn": 2,
+  "Process": 2,
+  "Pipes": 2,
+  "Privileges": 2,
+  "aio_info_addr": 2,
+  "ucred_addr": 2,
+  "kernel rw": 2,
+  "Cleanup": 2,
+  "kexp": 3,
+  "Autoload": 4
+};
+
+/* Stage completion is driven off exact log lines the chain prints, not off
+ * the progress tags. Tags are free text and their details vary, so matching
+ * on them marks stages done at the wrong time - "Offsets: 13.20 loaded"
+ * contains "loaded" but obviously does not mean the WebKit stage finished. */
+var MILESTONES = [
+  { line: "ARW ready",                     stage: 0, label: "ready" },
+  { line: "Worker chain: ready",           stage: 1, label: "ready" },
+  { line: "privileges ready",              stage: 2, label: "ready" },
+  { line: "elfldr is listening on 9021",  stage: 3, label: "listening" },
+  { line: "elfldr is listening on port 9021", stage: 3, label: "listening" }
+];
+
+
+/* The payload chain, in the order the unmodified kexp.js sends it. */
+var PAYLOADS = [
+  { name: "kstuff.elf", label: "kstuff-lite 1.11B", size: 1737080 },
+  { name: "shadowmountplus.elf", label: "shadowmountplus", size: 2449672 },
+  { name: "etaHEN.elf", label: "etaHEN (Oct 1)", size: 4690760 }
 ];
 
 var t0 = Date.now();
@@ -137,6 +193,42 @@ function stage(i, state, msg) {
 
 function setNow(text) { $("nowLabel").textContent = text; }
 
+/* ------------------------------------------------------------------ *
+ * The bridge. Everything under src/ reports through these two globals,
+ * which is exactly what upstream Relapse's site.js did - the chain has
+ * no idea the UI exists.
+ * ------------------------------------------------------------------ */
+var rawLogLines = [];
+var runTerminal = false;
+
+window.writeLog = function (message, type, replace) {
+  rawLogLines.push(String(message));
+  /* webkit.js's retry loop is uncapped, so once we have given up on the chain
+   * it can keep emitting for a while. Stop rendering those, or the log grows
+   * under a verdict that has already been reached. */
+  if (runTerminal) return;
+  log(message, type === "success" ? "success" : type === "error" ? "error" : type);
+};
+
+window.jb = {
+  logLines: rawLogLines,
+  payloadsDone: false,
+  mark: function (name, detail) {
+    var text = detail == null || detail === "" ? String(name)
+             : String(name) + ": " + String(detail);
+    var isFail = /Failed|failed/.test(String(name));
+    window.writeLog(text, isFail ? "error" : "info");
+
+    /* Progress tags only ever mark a stage as the current one. Completion is
+     * handled by the milestone watcher, because tag details are free text. */
+    var idx = TAG_STAGE[name];
+    if (idx === undefined || stageOnce[idx]) return;
+    if (name === "Offsets" || name === "Autoload") return;
+    stage(idx, "running", String(detail || "").split(" ")[0] || "run");
+  }
+};
+
+
 function setProgress(pct, cls) {
   var p = Math.max(0, Math.min(100, pct));
   var bar = $("barFill");
@@ -220,6 +312,7 @@ function begin() {
 
 function finish(ok, why) {
   stopClock();
+  runTerminal = true;
   if (ok) {
     for (var i = 0; i < STAGES.length; i++) {
       if ($(STAGES[i].el).className.indexOf("done") === -1) stage(i, "done", "done");
@@ -258,131 +351,91 @@ function finish(ok, why) {
 }
 
 /* mock run */
-var SCRIPT = [
-  [900,  0, "sys", "reading firmware banner"],
-  [1400, 1, "active", "running"],
-  [1900, 0, "info", "webkit: probing for JSC pool fingerprint"],
-  [2600, 1, "done", "ARW ready"],
-  [3000, 2, "active", "running"],
-  [3600, 0, "info", "kexp: staging kexp_2026_05_25.bin"],
-  [4300, 0, "sys", "JSC leak: 3 fingerprints, 12 pool entries"],
-  [5200, 0, "info", "releasing 3 spray objects"],
-  [6400, 2, "active", "aio_multi_wait uaf race"],
-  [7100, 0, "warning", "one retry needed (race lost)"],
-  [8400, 0, "info", "kernel r/w object acquired at 0xffff8..."],
-  [9200, 2, "done", "kernel r/w established"],
-  [9800, 3, "active", "waiting for :9021"],
-  [10500, 0, "sys", "sysopen /dev/elfldr 0x2f"],
-  [11200, 0, "success", "elfldr listening on 127.0.0.1:9021"],
-  [11800, 4, "active", "reading manifest"]
-];
-
-var SIZES = { "kstuff-lite.elf": 1737080, "kstuff.elf": 4690760, "etahen.elf": 4690760 };
-
-function runMock() {
-  /* Manifest resolution happens post-exploit, so show it at the same point. */
-  setTimeout(function () {
-    log("fetching manifest.txt", "info");
-    resolveManifest({ fw: fw, remote: true })
-      .then(function (r) {
-        renderPayloads(r.entries);
-        $("srcBadge").textContent = r.source;
-        $("kSource").textContent = r.source;
-        $("sumSession").textContent = r.source;
-        autoCollapse("secSession", false);   /* now there is something to show */
-        log("manifest: " + r.entries.length + " entries, source=" + r.source +
-            (r.reason ? " (" + r.reason + ")" : ""), "sys");
-        log("queue: " + r.entries.map(function (e) { return e.name; }).join(" -> "), "info");
-
-        var at = 12900;
-        r.entries.forEach(function (e, i) {
-          var sz = SIZES[e.name] || 0;
-          setTimeout(function () {
-            setPayload(i, "warming", "sending…");
-            setNow("sending " + e.name);
-            log("GET " + e.url, "info");
-            log(e.name + (sz ? " — " + sz.toLocaleString() + " bytes" : ""), "info");
-          }, at);
-          setTimeout(function () {
-            setPayload(i, "sent", "sent");
-            sentCount++;
-            runStats.bytes += sz;
-            log(e.name + " -> elfldr :9021 accepted", "success");
-            if (i === 0) setTimeout(function () {
-              log("patching app.db + shellui trophy IsServerAvailable", "info");
-              log("SceLncUtil getAppStatus 0x80940004 (expected, offline)", "sys");
-            }, 300);
-          }, at + 700);
-          at += 1500;
-        });
-
-        var warnAt = at + 300;
-        setTimeout(function () {
-          log("elfldr :9020 unavailable, falling back to :9021", "warning");
-        }, warnAt);
-        setTimeout(function () {
-          log("autostart skipped: no private elfldr :9020", "warning");
-          log("boot-time autostart unavailable on this firmware", "warning");
-          setNow("finishing");
-          finish(true);
-        }, warnAt + 400);
-      })
-      .catch(function (err) {
-        log("manifest fetch failed: " + err, "error");
-        stage(3, "fail", "manifest unavailable");
-        finish(false, "Could not resolve the payload manifest.");
-      });
-  }, 11800);
-
-  SCRIPT.forEach(function (s) {
-    setTimeout(function () {
-      if (s[1] >= 1 && s[1] <= 4) stage(s[1] - 1, s[2], s[3]);
-      else log(s[3], s[2]);
-    }, s[0]);
-  });
-
-  setTimeout(function () {
-    $("kPort").textContent = "127.0.0.1:9021";
-    $("kPort").className = "ok";
-    $("sumSession").textContent = "elfldr :9021";
-    stage(2, "done", "listening");   /* index 2 = elfldr; autoload is index 3 */
-  }, 11200);
+/* ---------- the real run ----------
+ *
+ * src/boot.js is the only caller of the chain. It is an ES module, so it loads
+ * after the classic scripts under src/ have put their globals in place. The
+ * promise it returns settles when the payload chain reports back. */
+function showPayloadQueue() {
+  renderPayloads(PAYLOADS.map(function (p) {
+    return { name: p.label, url: "payloads/" + p.name, size: p.size };
+  }));
+  $("srcBadge").textContent = PAYLOADS.length + " queued";
+  $("sumSession").textContent = "queued";
+  autoCollapse("secQueue", false);
+  $("kPayload").textContent = PAYLOADS.length + " payloads";
+  $("kSource").textContent = "bundled";
 }
 
-function runMockFail() {
-  setTimeout(function () { stage(0, "active", "running"); }, 1200);
-  setTimeout(function () { log("webkit: probing for JSC pool fingerprint", "info"); }, 1700);
-  setTimeout(function () { log("JSC leak: 2 fingerprints (expected 3)", "warning"); }, 2400);
-  setTimeout(function () { log("no usable pool object, aborting", "info"); }, 3800);
-  setTimeout(function () {
-    stage(0, "fail", "rejected");
-    log("WebKit exploit failed: fingerprint mismatch", "error");
-    log("Reload the page and try again — this happens sometimes.", "info");
-    finish(false, "WebKit exploit failed. Reload and retry.");
-  }, 5200);
-}
-
-/* real mode */
-function runReal() {
-  log("loading exploit chain from src/main.js", "info");
-  setNow("loading chain");
-  $("exploit").src = "src/main.js?autoload=payload.elf";
-}
-
-function onMessage(e) {
-  var d = e.data;
-  if (!d || d.type !== "wkal") return;
-  if (d.kind === "log") {
-    log(d.text || "…", d.level || "info");
-  } else if (d.kind === "autoload") {
-    if (d.ok) {
-      stage(3, "done", "autoload sent");
-      finish(true);
-    } else {
-      stage(3, "fail", "failed");
-      finish(false, d.why);
+function watchMilestones() {
+  var hit = MILESTONES.map(function () { return false; });
+  var timer = setInterval(function () {
+    var all = true;
+    for (var i = 0; i < MILESTONES.length; i++) {
+      if (hit[i]) continue;
+      all = false;
+      var m = MILESTONES[i];
+      if (rawLogLines.some(function (l) { return l.indexOf(m.line) !== -1; })) {
+        hit[i] = true;
+        stage(m.stage, "done", m.label);
+      }
     }
-  }
+    if (all) clearInterval(timer);
+  }, 100);
+}
+
+function watchPayloadProgress() {
+  /* The chain logs "<name> sent" as each one lands on elfldr. */
+  var sent = {};
+  var timer = setInterval(function () {
+    for (var i = 0; i < PAYLOADS.length; i++) {
+      var short = PAYLOADS[i].name.replace(".elf", "");
+      if (sent[i]) continue;
+      var hit = rawLogLines.some(function (l) {
+        return l.indexOf(short + ".elf sent") !== -1 ||
+               l.indexOf(short.replace(".elf", "") + " sent") !== -1;
+      });
+      if (hit) {
+        sent[i] = true;
+        sentCount++;
+        setPayload(i, "sent", "sent");
+        runStats.bytes += PAYLOADS[i].size;
+        log(PAYLOADS[i].label + " -> elfldr :9021 accepted", "success");
+        stage(4, "running", sentCount + "/" + PAYLOADS.length);
+      }
+    }
+    if (sentCount === PAYLOADS.length) {
+      clearInterval(timer);
+      stage(4, "done", "sent");
+      log("all payloads delivered to elfldr :9021", "success");
+    }
+  }, 120);
+}
+
+function runChain() {
+  log("loading exploit chain from src/boot.js", "info");
+  setNow("loading chain");
+  showPayloadQueue();
+  watchMilestones();
+  watchPayloadProgress();
+
+  import("./src/boot.js")
+    .then(function (boot) { return boot.boot(); })
+    .then(function () {
+      stage(3, "done", "listening");
+      $("kPort").textContent = "127.0.0.1:9021";
+      $("kPort").className = "ok";
+      $("sumSession").textContent = "elfldr :9021";
+      finish(true);
+    })
+    .catch(function (err) {
+      var why = err && err.message ? err.message : String(err);
+      log(why, "error");
+      for (var i = 0; i < STAGES.length; i++) {
+        if (!stageOnce[i]) stage(i, "fail", "not reached");
+      }
+      finish(false, why);
+    });
 }
 
 /* ---------- viewport probe (?measure=1) ---------- */
@@ -436,15 +489,23 @@ function showMeasure() {
 function start() {
   if (q.get("measure") === "1") { showMeasure(); return; }
   $("measure").classList.add("hidden");
+
+  if (!isPS5) {
+    /* There is no WebKit to exploit off-console, so the chain would fail in a
+       confusing way. Say so plainly instead. */
+    document.body.classList.add("unsupported");
+    $("bootStatus").textContent = "this site only runs on a PlayStation 5";
+    $("bootStatus").classList.add("err");
+    $("led").className = "led err";
+    return;
+  }
+
   begin();
-  if (q.get("real") === "1") runReal();
-  else if (q.get("fail") === "1") runMockFail();
-  else runMock();
+  runChain();
 }
 
 function init() {
   initEnv();
-  window.addEventListener("message", onMessage);
 
   /* manual collapse toggles */
   [].forEach.call(document.querySelectorAll(".tg"), function (btn) {
