@@ -145,7 +145,8 @@ async function mapElfFromUrl(url, p, chain) {
 
   const size = (elf.length + 0x3fff) & ~0x3fff;
   const mapped = await chain.syscall(FS.MMAP, 0, size, PROT_RW, MAP_PRIVATE_ANON, -1, 0);
-  if (low(mapped) <= 0x10000) throw new Error("mmap failed for " + url);
+  if (mapped.low >>> 0 === 0xffffffff || mapped.low < 0x10000)
+    throw new Error("mmap failed for " + url);
 
   const dwords = elf.length & ~3;
   for (let offset = 0; offset < dwords; offset += 4) p.write4(mapped.add32(offset), readU32(elf, offset));
@@ -172,9 +173,9 @@ async function connectToElfldr(p, chain) {
   p.write4(address.add32(4), 0x0100007f);
 
   for (let attempt = 0; attempt < 40; attempt++) {
-    const fd = low(await chain.syscall(FS.SOCKET, 2, 1, 0));
+    const fd = (await chain.syscall(FS.SOCKET, 2, 1, 0)).low | 0;
     if (fd >= 0) {
-      if (low(await chain.syscall(FS.CONNECT, fd, address, 16)) === 0) return fd;
+      if (((await chain.syscall(FS.CONNECT, fd, address, 16)).low | 0) === 0) return fd;
       await chain.syscall(FS.CLOSE, fd);
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
@@ -187,7 +188,7 @@ async function sendMapped(name, payload, p, chain) {
   try {
     for (let offset = 0; offset < payload.size; ) {
       const length = Math.min(CHUNK, payload.size - offset);
-      const written = low(await chain.syscall(FS.WRITE, fd, payload.base.add32(offset), length));
+      const written = (await chain.syscall(FS.WRITE, fd, payload.base.add32(offset), length)).low | 0;
       if (written <= 0) throw new Error(name + " socket write failed");
       offset += written;
     }
@@ -320,9 +321,11 @@ export async function boot() {
    * finish a reboot. Bound the stage from out here; relapse_exploit.js is left
    * alone. The phase is read back from the log so a timeout says where it got
    * stuck rather than just failing.
-   * ?kernelTimeout=N overrides it in seconds. */
+   * ?kernelTimeout=N overrides it in seconds. A successful run sat on
+   * "checking aio groups" for minutes, so the default is well past that; the
+   * bound is for runs that never come back at all. */
   const kernelTimeout = Number(
-    new URLSearchParams(location.search).get("kernelTimeout") || 240,
+    new URLSearchParams(location.search).get("kernelTimeout") || 600,
   ) * 1000;
 
   window.writeLog("Agent: " + navigator.userAgent, "info");
