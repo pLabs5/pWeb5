@@ -116,8 +116,8 @@ body {
 
 .ascii {
   color:var(--grn);
-  font-size:.62rem;
-  line-height:1.15;
+  font-size:1.5rem;
+  line-height:1.1;
   font-weight:700;
   text-shadow:0 0 6px rgba(51,255,119,.35);
   overflow-x:auto;
@@ -347,7 +347,7 @@ h2 em { font-style:normal; letter-spacing:.04em; text-transform:none; }
 /* ---------- narrow windows: shave the optional chrome ---------- */
 @media (max-width:22rem) {
   .note { display:none; }
-  .ascii { font-size:.55rem; }
+  .ascii { font-size:1.15rem; }
 }
 
 /* ---------- short windows: buy back vertical space for the log ---------- */
@@ -364,6 +364,6 @@ h2 em { font-style:normal; letter-spacing:.04em; text-transform:none; }
 }
 
 @media (max-height:20rem) {
-  .ascii { font-size:.5rem; }
+  .ascii { font-size:.95rem; }
   .note { display:none; }
 }
