@@ -78,11 +78,14 @@ function getWebKitBase() {
  * stuck. Bound it from the outside instead of editing webkit.js. */
 function withDeadline(promise, ms, what) {
   let timer;
+  /* `what` may be a function so a message that depends on runtime state - the
+   * phase the exploit last reported, say - is only built if it actually fires. */
+  const describe = () => (typeof what === "function" ? what() : what);
   return Promise.race([
     promise.finally(() => clearTimeout(timer)),
     new Promise((_, reject) => {
       timer = setTimeout(
-        () => reject(new Error(what + " did not complete in " + Math.round(ms / 1000) + "s")),
+        () => reject(new Error(describe() + " did not complete in " + Math.round(ms / 1000) + "s")),
         ms,
       );
     }),
@@ -279,6 +282,17 @@ function waitForPayloads(timeoutMs) {
   });
 }
 
+/* The last "Kernel: ..." line the exploit reported, so a timeout can name the
+ * phase it stalled in. */
+function lastKernelPhase() {
+  const lines = window.jb.logLines || [];
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = /^Kernel: (.+)$/.exec(lines[i]);
+    if (m) return m[1];
+  }
+  return "unknown";
+}
+
 export async function boot() {
   const rejection = window.firmware.rejection();
   if (rejection) throw new Error(rejection);
@@ -290,6 +304,17 @@ export async function boot() {
   const webkitTimeout = override ? Number(override) * 1000 : 300000;
   const payloadTimeout = Number(
     new URLSearchParams(location.search).get("payloadTimeout") || 120,
+  ) * 1000;
+  /* The kernel stage walks every armed AIO group and clears it, and each step
+   * is a kernel round trip through the ROP primitive. It has no bound of its
+   * own, so on a bad run it can sit on "checking aio groups" indefinitely and
+   * the page never reaches a verdict, which is what left the console unable to
+   * finish a reboot. Bound the stage from out here; relapse_exploit.js is left
+   * alone. The phase is read back from the log so a timeout says where it got
+   * stuck rather than just failing.
+   * ?kernelTimeout=N overrides it in seconds. */
+  const kernelTimeout = Number(
+    new URLSearchParams(location.search).get("kernelTimeout") || 240,
   ) * 1000;
 
   window.writeLog("Agent: " + navigator.userAgent, "info");
@@ -312,7 +337,11 @@ export async function boot() {
     return e;
   });
 
-  await main(primitive);
+  await withDeadline(
+    main(primitive),
+    kernelTimeout,
+    () => "the kernel stage, stalled after: " + lastKernelPhase(),
+  );
 
   if (!window.jb.chain || !window.jb.p)
     throw new Error("the kernel stage did not publish its ROP handles");
