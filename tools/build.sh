@@ -11,15 +11,14 @@ OUT=dist
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
-cp index.html style.css app.js manifest.txt _headers probe.html "$OUT/"
-cp tools/devtools_mock.js "$OUT/devtools_mock.js"
+cp index.html style.css app.js manifest.txt _headers "$OUT/"
 cp -r src offsets payloads fonts "$OUT/"
 
-# Unmistakable per-deploy tag on the JAILBREAK button: the console cannot
-# open a URL easily, so the label itself proves which bundle is running.
+# Unmistakable per-deploy tag, fixed to the bottom-left corner: the console
+# cannot open a URL easily, so the label proves which bundle is running.
 # The checked-in index.html stays clean; only dist/ gets the tag.
 SHA=$(git rev-parse --short HEAD 2>/dev/null || echo dev)
-sed -i 's#<button id="go" class="go" type="button">JAILBREAK</button>#<button id="go" class="go" type="button">JAILBREAK<sub class="bver">'"$SHA"'</sub></button>#' "$OUT/index.html"
+sed -i "s#<span class=\"bver\" id=\"bver\"></span>#<span class=\"bver\" id=\"bver\">${SHA}</span>#" "$OUT/index.html"
 
 echo "dist/ contents:"
 find "$OUT" -type f | sort | sed 's/^/  /'

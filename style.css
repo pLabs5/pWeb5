@@ -91,10 +91,6 @@ body {
 }
 .go:hover, .go:focus-visible { background:var(--grn); color:var(--bg); outline:none; }
 .go:disabled { border-color:var(--dim); color:var(--dim); cursor:default; background:transparent; }
-.go .bver {
-  font:600 .45rem/1 "JB Mono",ui-monospace,monospace; color:var(--grn-dim); letter-spacing:.06em;
-  margin-left:.45rem; vertical-align:middle;
-}
 
 /* ---------- post-run offer ---------- */
 .offer {
@@ -327,6 +323,13 @@ h2 em { font-style:normal; letter-spacing:.04em; text-transform:none; }
 }
 
 #exploit { display:none; }
+
+/* per-deploy build tag, fixed bottom-left corner */
+#bver {
+  position:fixed; left:.5rem; bottom:.4rem; z-index:50;
+  font:600 .5rem/1 "JB Mono",ui-monospace,monospace; color:var(--grn-dim);
+  letter-spacing:.06em; pointer-events:none; user-select:none;
+}
 
 /* ---------- viewport probe ---------- */
 #measure { padding:var(--gut); }
