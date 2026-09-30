@@ -1,0 +1,9 @@
+# The PS5 WebView caches aggressively, and a mixed new app.js + stale
+# style.css once left the kernel stage rendering in the old pre-wrap layout
+# (blank rows between "[*] Kernel: ..." lines, then a test showed them as
+# inset). Force revalidation on everything the run reads live so a redeploy
+# is never half-old on the console; if-unmodified stays cheap thanks to the
+# platform ETags.
+/*
+  Cache-Control: no-cache
+  X-Robots-Tag: noindex

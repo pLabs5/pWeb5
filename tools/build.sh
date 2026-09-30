@@ -11,7 +11,7 @@ OUT=dist
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
-cp index.html style.css app.js manifest.txt "$OUT/"
+cp index.html style.css app.js manifest.txt _headers "$OUT/"
 cp -r src offsets payloads fonts "$OUT/"
 
 echo "dist/ contents:"

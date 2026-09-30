@@ -189,8 +189,6 @@ function initEnv() {
   $("kPayload").textContent = "--";
   $("kSource").textContent = "--";
   $("kTime").textContent = "0.0s";
-  $("led").className = "led run";
-
   log("webview " + viewport() + (isPS5 ? "" : " (preview)"), "sys");
   log("ua " + navigator.userAgent, "sys");
   log("fw " + (fw || "unknown") + " from " + fwSource, isPS5 && !fw ? "warning" : "sys");
@@ -224,8 +222,18 @@ var LOG_STEP_MS = 100;
 
 function renderLogLine(entry) {
   var el = document.createElement("div");
+  var msg = String(entry.msg);
+  /* The chain prints "payloads loaded" the moment its own handoff to elfldr
+   * lands, before boot.js has sent a single manifest entry. On a fresh run
+   * that reads as a lie in the log, so correct the display text only; the
+   * raw log keeps the literal for anything that matches on it. */
+  if (msg === "Kernel: payloads loaded") msg = "Kernel: elfldr ready, payloads load next";
+  /* Collapse every run of whitespace so a stray newline can never open blank
+   * rows or shove a line right, no matter what white-space policy a cached
+   * stylesheet leaves on the element. */
+  msg = msg.replace(/\s+/g, " ").trim();
   el.className = "line " + (entry.level || "log");
-  el.textContent = "[" + logMarker(entry.level) + "] " + entry.msg;
+  el.textContent = "[" + logMarker(entry.level) + "] " + msg;
   var box = $("log");
   var atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 24;
   box.appendChild(el);
@@ -394,9 +402,7 @@ function begin() {
   $("kSource").textContent = "--";
   $("kPayload").textContent = "--";
   $("logCount").textContent = "0";
-  $("led").className = "led run";
-
-  /* start collapsed: the queue is unknown until the manifest resolves, and the
+  /* the queue is unknown until the manifest resolves, and the
      session block has nothing but placeholders until elfldr comes up. Keeps
      short popup windows uncrowded during the early phase. */
   setCollapsed("secQueue", true);
@@ -420,7 +426,6 @@ function finish(ok, why) {
   } else {
     setNow("failed");
   }
-  $("led").className = "led " + (ok ? "ok" : "err");
 
   /* Sections are left as-is on finish: the run is the interesting part, so
      stages/queue/session/log stay expanded and readable. (The verdict screen
@@ -533,6 +538,14 @@ function watchPayloadProgress() {
         runStats.bytes += payloadEntries[i].size || 0;
         log(name + " -> elfldr :9021 accepted", "success");
         stage(4, "running", sentCount + "/" + payloadEntries.length);
+        /* Announce the inter-payload pause here, right after this entry's
+         * accepted confirmation, so the log reads in the order users expect:
+         * fetching -> sent -> accepted -> waiting. Emitting it from boot.js
+         * raced ahead of this 120ms poll and wedged "waiting" before the
+         * confirmation line. */
+        if (i < payloadEntries.length - 1 &&
+            window.jb && window.jb.nextDelay)
+          log("waiting " + window.jb.nextDelay + "s before the next payload", "info");
       }
     }
     if (sentCount === payloadEntries.length) {
@@ -627,7 +640,6 @@ function start() {
     document.body.classList.add("unsupported");
     $("bootStatus").textContent = "this site only runs on a PlayStation 5";
     $("bootStatus").classList.add("err");
-    $("led").className = "led err";
     $("goWrap").classList.add("hidden");
     $("goNote").classList.add("hidden");
     return;

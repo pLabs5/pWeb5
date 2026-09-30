@@ -248,6 +248,10 @@ async function loadPayloads(p, chain) {
 
   window.writeLog("loading " + entries.length + " payload(s) from the manifest", "info");
   window.jb.payloadEntries = entries;
+  /* Handed to app.js's payload watcher, which announces the inter-payload
+   * pause right after each entry's "accepted" confirmation - announcing it
+   * from here raced ahead of the watcher's 120ms poll. */
+  window.jb.nextDelay = delay / 1000;
 
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
@@ -256,10 +260,8 @@ async function loadPayloads(p, chain) {
     const payload = await mapElfFromUrl(source, p, chain);
     await sendMapped(entry.name, payload, p, chain);
     window.jb.mark("payload", entry.name + " sent");
-    if (i < entries.length - 1 && delay > 0) {
-      window.writeLog("waiting " + delay / 1000 + "s before the next payload", "info");
+    if (i < entries.length - 1 && delay > 0)
       await new Promise((resolve) => setTimeout(resolve, delay));
-    }
   }
   return entries;
 }

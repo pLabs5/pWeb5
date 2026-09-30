@@ -166,13 +166,6 @@ body {
 .tag { color:var(--hi); font-weight:700; letter-spacing:.1em; }
 .fw { color:var(--grn-dim); white-space:nowrap; margin-left:auto; }
 
-/* activity LED: pulses while the run is in flight */
-.led { width:.5rem; height:.5rem; border-radius:50%; background:var(--dim2); flex:0 0 auto; }
-.led.run { background:var(--cyan); animation:pulse 1.1s ease-in-out infinite; }
-.led.ok  { background:var(--grn); box-shadow:0 0 6px rgba(51,255,119,.6); }
-.led.err { background:var(--red); box-shadow:0 0 6px rgba(255,77,77,.6); }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
-
 /* ---------- steps ---------- */
 .steps { flex:0 0 auto; }
 .step {
