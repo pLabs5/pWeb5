@@ -124,17 +124,28 @@ async function getPrimitive(timeoutMs) {
  * ------------------------------------------------------------------ */
 
 const FS = {
+  READ: 0x003,
   WRITE: 0x004,
+  OPEN: 0x005,
   CLOSE: 0x006,
   SOCKET: 0x061,
   CONNECT: 0x062,
   MMAP: 0x1dd,
+  LSEEK: 0x1de,
 };
 const O_RDONLY = 0x0000;
 const PROT_RW = 0x3;
 const MAP_PRIVATE_ANON = 0x1002;
 const ELFDR_PORT = 9021;
 const CHUNK = 0x10000;
+const SEEK_SET = 0x0;
+const SEEK_END = 0x2;
+/* Console-local payloads are addressed under this root and nowhere else, so a
+ * manifest cannot ask the exploit to open an arbitrary path on the console. */
+const LOCAL_ROOT = "/data/autoldr";
+/* A ceiling, not a reservation: the mapping below is sized from the file, and
+ * this only rejects a size a payload could not plausibly be. */
+const MAX_LOCAL_SIZE = 0x4000000;
 
 /* The network path, matching kexp's mapElf. */
 async function mapElfFromUrl(url, p, chain) {
@@ -163,6 +174,52 @@ function readU32(bytes, offset) {
       (bytes[offset + 3] << 24)) >>>
     0
   );
+}
+
+function low(result) {
+  if (result === null || result === undefined) return -1;
+  return typeof result === "object" && result.low !== undefined ? result.low | 0 : result | 0;
+}
+
+/* The console-local path. Same {base, size} shape as mapElfFromUrl, so the two
+ * are interchangeable and the sender cannot tell them apart.
+ *
+ * Only reachable after the kernel stage, which is where payloads load anyway:
+ * before it the page has no filesystem access at all. The mapping is sized from
+ * the file with lseek rather than a fixed ceiling - the ceiling version reserved
+ * 16MB per candidate and two of those was enough to wedge the exploit on
+ * console, which is why the local path was removed in 4ba38c6. */
+async function mapElfFromDisk(path, p, chain) {
+  /* p.stringify is what kexp uses for names handed to the kernel: a
+   * NUL-terminated copy in ROP memory that keeps its backing alive. */
+  const pathAddr = p.stringify(path);
+
+  const fd = low(await chain.syscall(FS.OPEN, pathAddr, O_RDONLY, 0));
+  if (fd < 0) throw new Error("cannot open " + path + " on the console");
+
+  try {
+    const size = low(await chain.syscall(FS.LSEEK, fd, 0, SEEK_END));
+    if (size < 0) throw new Error("cannot size " + path + " on the console");
+    if (size < 0x1000) throw new Error(path + " is too small to be an ELF");
+    if (size > MAX_LOCAL_SIZE) throw new Error(path + " is " + size + " bytes, over the local limit");
+    await chain.syscall(FS.LSEEK, fd, 0, SEEK_SET);
+
+    const mapped = await chain.syscall(FS.MMAP, 0, (size + 0x3fff) & ~0x3fff, PROT_RW, MAP_PRIVATE_ANON, -1, 0);
+    if (mapped.low >>> 0 === 0xffffffff || mapped.low < 0x10000)
+      throw new Error("mmap failed for " + path);
+
+    let total = 0;
+    while (total < size) {
+      const got = low(await chain.syscall(FS.READ, fd, mapped.add32(total), Math.min(CHUNK, size - total)));
+      if (got <= 0) break;
+      total += got;
+    }
+    if (total !== size) throw new Error(path + " read " + total + " of " + size + " bytes");
+    if (p.read4(mapped) >>> 0 !== 0x464c457f) throw new Error(path + " is not an ELF");
+    return { base: mapped, size: total };
+  } finally {
+    await chain.syscall(FS.CLOSE, fd);
+  }
 }
 
 async function connectToElfldr(p, chain) {
@@ -197,6 +254,33 @@ async function sendMapped(name, payload, p, chain) {
   }
 }
 
+/* A manifest target is one of three things: a path on this site, which resolves
+ * under payloads/; an absolute http/https URL to a payload hosted anywhere else
+ * (/ /host/path is left alone and the WebView resolves it against the page's
+ * scheme); or a console-local path behind a "local:" prefix, which is the only
+ * form that reads the console's filesystem. Rejecting every other scheme is the
+ * point: left alone it would be fetched as a path on this site and 404, naming
+ * nothing useful. */
+function parseEntry(name, target) {
+  if (!target) throw new Error("manifest: " + name + " has no target");
+
+  if (/^local:/i.test(target)) {
+    const path = target.slice("local:".length);
+    if (path.indexOf(LOCAL_ROOT + "/") !== 0)
+      throw new Error("manifest: " + name + " has to be under " + LOCAL_ROOT + "/, got " + path);
+    /* The prefix alone is not confinement: the kernel resolves ".." and "." when
+     * it opens the path, so a target could start under the root and land outside
+     * it. Reject the traversal here instead of trusting the prefix. */
+    if (path.split("/").some((part) => part === ".."))
+      throw new Error("manifest: " + name + " must not contain .., got " + path);
+    return { name: name, url: path, local: true };
+  }
+  if (/^(https?:)?\/\//i.test(target)) return { name: name, url: target, local: false };
+  if (/^[a-z][a-z0-9+.-]*:/i.test(target))
+    throw new Error("manifest: " + name + " must be an http or https URL, got " + target);
+  return { name: name, url: "payloads/" + target.replace(/^payloads\//, ""), local: false };
+}
+
 function parseManifest(text) {
   const entries = [];
   for (const raw of String(text).split("\n")) {
@@ -205,8 +289,11 @@ function parseManifest(text) {
     const line = raw.replace(/#.*$/, "").trim();
     if (!line) continue;
     const eq = line.indexOf("=");
-    if (eq < 0) entries.push({ name: line, url: "payloads/" + line });
-    else entries.push({ name: line.slice(0, eq).trim(), url: line.slice(eq + 1).trim() });
+    if (eq < 0) entries.push(parseEntry(line, line));
+    else {
+      const name = line.slice(0, eq).trim();
+      entries.push(parseEntry(name, line.slice(eq + 1).trim()));
+    }
   }
   return entries;
 }
@@ -215,25 +302,30 @@ function parseManifest(text) {
  * needed a 16MB mapping per candidate, twice, before any payload loaded, which
  * was enough to wedge the exploit on console. See the README. */
 async function resolveEntries() {
+  let text = null;
   try {
     const response = await fetch("manifest.txt", { cache: "no-store" });
-    if (response.ok) {
-      const parsed = parseManifest(await response.text());
-      if (parsed.length) {
-        window.writeLog("manifest: manifest.txt (site)", "info");
-        return parsed;
-      }
-    }
+    if (response.ok) text = await response.text();
   } catch (e) {
     /* fall through to the default below */
+  }
+  /* Parsed outside the try on purpose: a manifest that fetched but has a bad
+   * line in it has to fail the run rather than quietly hand back the fallback,
+   * which would load the wrong payloads and still report success. */
+  if (text !== null) {
+    const parsed = parseManifest(text);
+    if (parsed.length) {
+      window.writeLog("manifest: manifest.txt (site)", "info");
+      return parsed;
+    }
   }
   /* Must mirror the order in manifest.txt: kstuff first, then etaHEN on its own,
    * then shadowmountplus last. Reordering here reintroduces the panic. */
   window.writeLog("manifest: unavailable, using the built-in fallback", "warning");
   return [
-    { name: "kstuff-lite.elf", url: "payloads/kstuff-lite-1.11B.elf" },
-    { name: "etahen.elf", url: "payloads/etaHEN-Oct1.elf" },
-    { name: "shadowmountplus.elf", url: "payloads/shadowmountplus.elf" },
+    { name: "kstuff-lite.elf", url: "payloads/kstuff-lite-1.11B.elf", local: false },
+    { name: "etahen.elf", url: "payloads/etaHEN.elf", local: false },
+    { name: "shadowmountplus.elf", url: "payloads/shadowmountplus.elf", local: false },
   ];
 }
 
@@ -255,9 +347,11 @@ async function loadPayloads(p, chain) {
 
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
-    const source = "payloads/" + entry.url.replace(/^payloads\//, "");
-    window.writeLog("[" + (i + 1) + "/" + entries.length + "] fetching " + entry.name, "info");
-    const payload = await mapElfFromUrl(source, p, chain);
+    const source = entry.url;
+    window.writeLog("[" + (i + 1) + "/" + entries.length + "] fetching " + entry.name + " from " + source, "info");
+    const payload = entry.local
+      ? await mapElfFromDisk(source, p, chain)
+      : await mapElfFromUrl(source, p, chain);
     await sendMapped(entry.name, payload, p, chain);
     window.jb.mark("plugin", entry.name + " sent");
     if (i < entries.length - 1 && delay > 0)

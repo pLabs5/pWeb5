@@ -36,19 +36,55 @@ wanted, rather than refusing to start.
 
 ## payloads
 
-`src/kexp.js` sends these, in this order, to `127.0.0.1:9021`:
+`manifest.txt` decides these, and the order, and the loader sends them in that
+order to `127.0.0.1:9021`:
 
 | fetched as | actually is |
 |---|---|
-| `kstuff.elf` | kstuff-lite 1.11B |
+| `kstuff-lite.elf` | kstuff-lite 1.11B |
+| `etahen.elf` | the current etaHEN build |
 | `shadowmountplus.elf` | shadowmountplus |
-| `etaHEN.elf` | the Oct 1 etaHEN build |
+
+### manifest format
+
+One `name=target` per line. `#` starts a comment, blank lines are skipped, and a
+bare `name` with no `=` is `payloads/<name>`. A target is one of three things:
+
+| target | where it comes from |
+|---|---|
+| `payloads/<file>` | a file on this site |
+| `https://host/<file>` | anywhere else, if the host serves it |
+| `local:/data/autoldr/<file>` | a file already on the console |
+
+A remote host has to send `Access-Control-Allow-Origin` or the WebView fetch
+fails — which is why the release-asset CDN on `github.com` does not work as a
+target, while `raw.githubusercontent.com` does. Any other scheme is rejected and
+fails the run rather than being fetched as a path on this site.
+
+### local payloads
+
+`local:` targets are the ones that need no host at all. Drop the ELF in
+`/data/autoldr/` on the console, point the manifest at it, and the loader opens
+it after the kernel stage and streams it to elfldr exactly like a fetched one —
+the bytes never pass through the page, so a local payload costs the same as a
+remote one. The file has to be there before the run starts; the site has no way
+to put it there, deliberately.
+
+Only `/data/autoldr/` is reachable, so a manifest cannot talk the exploit into
+opening an arbitrary path on the console. A `..` segment is rejected as well —
+the kernel would resolve it after the prefix check, so the prefix alone is not
+confinement. The mapping is sized from the file with `lseek` rather than a fixed
+ceiling — the ceiling version reserved 16MB per candidate and two of those was
+what wedged the exploit when this path was pulled in `4ba38c6`. That was a local
+*manifest* being read through an ELF-only mapper, which could only ever fail;
+local *payloads* never had the bug.
 
 ### etaHEN expires on 1 October
 
-`payloads/etaHEN-Oct1.elf` stops working on 1 October. The send still succeeds
+`payloads/etaHEN.elf` stops working on 1 October 2026. The send still succeeds
 afterwards, so it looks like a successful run followed by nothing happening.
-Pull the new build from the etaHEN Discord and replace the file.
+Pull the new build from the etaHEN Discord, replace the file, and update the
+expiry comment in `manifest.txt` — the filename no longer carries the date.
 
 ### shadowmountplus can block etaHEN
 

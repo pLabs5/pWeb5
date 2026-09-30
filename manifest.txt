@@ -13,9 +13,30 @@
 # candidate, and doing that before any payload loaded was enough to wedge the
 # exploit on console.
 #
-# Format: one "name=url" per line. Blank lines and lines starting with # are
+# Format: one "name=target" per line. Blank lines and lines starting with # are
 # ignored, as is anything after a # on a line. A bare "name" with no "=" is
 # treated as payloads/<name>.
+#
+# A target is one of three things:
+#
+#   payloads/<file>        a file on this site
+#   http(s)://host/<file>  a payload hosted anywhere else
+#   local:/data/autoldr/f  a payload already sitting on the console
+#
+# A "//host/path" target is taken as https. Any other scheme is rejected and the
+# run fails on it, so a typo cannot quietly become a path on this site.
+#
+# A remote host has to send Access-Control-Allow-Origin, or the WebView fetch
+# fails and the run reports the URL that would not load.
+#
+# A local: target is opened on the console after the kernel stage, which is the
+# only point where the chain can read a file at all. Only paths under
+# /data/autoldr/ are reachable - anything else is rejected, and so is a ".."
+# segment, which the kernel would otherwise resolve after the prefix check -
+# and the file has to be on the console before the run starts, because this site
+# has no way to put it there. A local payload costs the same as a fetched one:
+# it is mapped in ROP memory and streamed to elfldr either way, so the bytes
+# never reach the page.
 #
 # ORDER MATTERS, and the gap between payloads matters more.
 #
@@ -28,25 +49,29 @@
 kstuff-lite.elf=payloads/kstuff-lite-1.11B.elf
 
 # --- etaHEN second, on its own, so its FTP server comes up settled ---
-etahen.elf=payloads/etaHEN-Oct1.elf
+etahen.elf=payloads/etaHEN.elf
 
 # --- shadowmountplus last: it remounts /system_ex, so it goes after the rest ---
 shadowmountplus.elf=payloads/shadowmountplus.elf
 
 # --- alternative: full kstuff, for firmware 10.01 and below ---
 # kstuff.elf=payloads/kstuff.elf
-# etahen.elf=payloads/etaHEN-Oct1.elf
+# etahen.elf=payloads/etaHEN.elf
 # shadowmountplus.elf=payloads/shadowmountplus.elf
 
+# --- a payload from somewhere else entirely, if a host will serve it ---
+# Prospector.elf=https://example.com/payloads/Prospector.elf
+
+# --- a payload dropped on the console beforehand, no host needed ---
+# ProsperoMgr.elf=local:/data/autoldr/ProsperoMgr.elf
+
 # ============================================================================
-# EXPIRY: payloads/etaHEN-Oct1.elf stops working on 1 October.
+# EXPIRY: payloads/etaHEN.elf stops working on 1 October 2026.
 #
-# etaHEN is time-limited. The 1 October build is the one committed here, so the
-# site will start failing on/after that date with no obvious cause - it will
-# look like a successful send followed by nothing happening.
-#
-# When that happens, pull the new build from the etaHEN Discord, and replace
-# payloads/etaHEN-Oct1.elf plus the manifest line above with a filename that
-# says when the new one expires. Do not silently overwrite it: the filename is
-# the only place the expiry date is recorded in this repo.
+# etaHEN is time-limited. The filename is deliberately fixed so a replacement
+# build drops straight in without an edit here, which moves the only record of
+# the expiry date into this comment - so when the build stops working, pull the
+# new one from the etaHEN Discord, replace payloads/etaHEN.elf, and update the
+# date above. Nothing fails loudly in the meantime: the send still succeeds, so
+# a stale build looks like a successful run followed by nothing happening.
 # ============================================================================

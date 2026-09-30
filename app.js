@@ -71,7 +71,7 @@ var MILESTONES = [
 var FALLBACK_PAYLOADS = [
   { name: "kstuff.elf", label: "kstuff-lite 1.11B", size: 1737080 },
   { name: "shadowmountplus.elf", label: "shadowmountplus", size: 2449672 },
-  { name: "etaHEN.elf", label: "etaHEN (Oct 1)", size: 4690760 }
+  { name: "etaHEN.elf", label: "etaHEN", size: 4690760 }
 ];
 
 var t0 = Date.now();
