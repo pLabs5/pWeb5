@@ -227,7 +227,7 @@ function renderLogLine(entry) {
    * lands, before boot.js has sent a single manifest entry. On a fresh run
    * that reads as a lie in the log, so correct the display text only; the
    * raw log keeps the literal for anything that matches on it. */
-  if (msg === "Kernel: payloads loaded") msg = "Kernel: elfldr ready, payloads load next";
+  if (msg === "Kernel: payloads loaded") msg = "Kernel: elfldr ready, plugins load next";
   /* Collapse every run of whitespace so a stray newline can never open blank
    * rows or shove a line right, no matter what white-space policy a cached
    * stylesheet leaves on the element. */
@@ -435,7 +435,7 @@ function finish(ok, why) {
   $("done").className = "screen center" + (ok ? "" : " error");
   $("doneTitle").textContent = ok ? "JAILBROKEN" : "FAILED";
   $("doneSub").textContent = ok
-    ? (sentCount + " payload(s) delivered — close this window")
+    ? (sentCount + " plugin(s) delivered — close this window")
     : (why || "chain did not complete");
 
   /* The installer only works once elfldr is actually listening, so it is tied
@@ -454,7 +454,7 @@ function finish(ok, why) {
     "firmware   " + (fw || "?") + "\n" +
     "viewport   " + viewport() + "\n" +
     "manifest   " + ($("kSource").textContent) + "\n" +
-    "payloads   " + (names.length ? names.join(" -> ") : "none") + "\n" +
+    "plugins    " + (names.length ? names.join(" -> ") : "none") + "\n" +
     "elfldr     " + ($("kPort").textContent) + "\n" +
     "transferred " + runStats.bytes.toLocaleString() + " bytes\n" +
     "elapsed    " + ((Date.now() - t0) / 1000).toFixed(1) + "s\n" +
@@ -483,7 +483,7 @@ function syncPayloadQueue() {
     return { name: e.name, url: e.url, size: e.size || 0, local: !!e.local };
   }));
   $("srcBadge").textContent = payloadEntries.length + " queued";
-  $("kPayload").textContent = payloadEntries.length + " payloads";
+  $("kPayload").textContent = payloadEntries.length + " plugins";
   var src = rawLogLines.filter(function (l) { return l.indexOf("manifest: ") === 0; }).pop();
   $("kSource").textContent = src ? src.slice("manifest: ".length) : "manifest";
   return true;
@@ -545,13 +545,13 @@ function watchPayloadProgress() {
          * confirmation line. */
         if (i < payloadEntries.length - 1 &&
             window.jb && window.jb.nextDelay)
-          log("waiting " + window.jb.nextDelay + "s before the next payload", "info");
+          log("waiting " + window.jb.nextDelay + "s before the next plugin", "info");
       }
     }
     if (sentCount === payloadEntries.length) {
       clearInterval(timer);
       stage(4, "done", "sent");
-      log("all payloads delivered to elfldr :9021", "success");
+      log("all plugins delivered to elfldr :9021", "success");
     }
   }, 120);
 }
