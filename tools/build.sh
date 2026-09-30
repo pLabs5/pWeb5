@@ -12,6 +12,7 @@ rm -rf "$OUT"
 mkdir -p "$OUT"
 
 cp index.html style.css app.js manifest.txt _headers probe.html "$OUT/"
+cp tools/devtools_mock.js "$OUT/devtools_mock.js"
 cp -r src offsets payloads fonts "$OUT/"
 
 # Unmistakable per-deploy tag on the JAILBREAK button: the console cannot
