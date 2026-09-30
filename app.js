@@ -65,8 +65,10 @@ var MILESTONES = [
 ];
 
 
-/* The payload chain, in the order the unmodified kexp.js sends it. */
-var PAYLOADS = [
+/* The payload list is no longer hardcoded here. It comes from the manifest at
+ * runtime - see showPayloadQueue()/syncPayloadQueue(). Kept only as the
+ * fallback boot.js uses if neither manifest can be read. */
+var FALLBACK_PAYLOADS = [
   { name: "kstuff.elf", label: "kstuff-lite 1.11B", size: 1737080 },
   { name: "shadowmountplus.elf", label: "shadowmountplus", size: 2449672 },
   { name: "etaHEN.elf", label: "etaHEN (Oct 1)", size: 4690760 }
@@ -194,10 +196,8 @@ function initEnv() {
   log("fw " + (fw || "unknown") + " from " + fwSource, isPS5 && !fw ? "warning" : "sys");
   if (isPS5 && !fw)
     log("no version parsed; append ?fw=<version> to select offsets manually", "warning");
-  if (fw)
-    log("kstuff: " + (useFullKstuff(fw)
-      ? "<= 10.01, full kstuff supported"
-      : "> 10.01, full kstuff unsupported, default kstuff-lite"), "sys");
+  /* Which kstuff build loads is the manifest's decision now, not something
+   * worth guessing at from the firmware here - boot.js logs what it sent. */
   log("document " + document.documentElement.scrollWidth + "x" +
       document.documentElement.scrollHeight, "sys");
 }
@@ -429,15 +429,39 @@ function finish(ok, why) {
  * src/boot.js is the only caller of the chain. It is an ES module, so it loads
  * after the classic scripts under src/ have put their globals in place. The
  * promise it returns settles when the payload chain reports back. */
-function showPayloadQueue() {
-  renderPayloads(PAYLOADS.map(function (p) {
-    return { name: p.label, url: "payloads/" + p.name, size: p.size };
+/* The payload list is not known until boot.js resolves the manifest, which it
+ * can only do after the kernel stage. This starts as a placeholder and is
+ * replaced the moment the real entries exist; see syncPayloadQueue(). */
+var payloadEntries = [];
+
+function syncPayloadQueue() {
+  var entries = (window.jb && window.jb.payloadEntries) || [];
+  if (!entries.length) return false;
+  payloadEntries = entries;
+  renderPayloads(entries.map(function (e) {
+    return { name: e.name, url: e.url, size: e.size || 0, local: !!e.local };
   }));
-  $("srcBadge").textContent = PAYLOADS.length + " queued";
+  $("srcBadge").textContent = payloadEntries.length + " queued";
+  $("kPayload").textContent = payloadEntries.length + " payloads";
+  var src = rawLogLines.filter(function (l) { return l.indexOf("manifest: ") === 0; }).pop();
+  $("kSource").textContent = src ? src.slice("manifest: ".length) : "manifest";
+  return true;
+}
+
+function showPayloadQueue() {
+  /* The console's own manifest only becomes readable after the kernel stage,
+   * so up front this is an honest placeholder rather than a guess. */
+  renderPayloads([{ name: "resolving manifest", url: "", size: 0 }]);
+  $("srcBadge").textContent = "resolving";
   $("sumSession").textContent = "queued";
   autoCollapse("secQueue", false);
-  $("kPayload").textContent = PAYLOADS.length + " payloads";
-  $("kSource").textContent = "bundled";
+  $("kPayload").textContent = "resolving";
+  $("kSource").textContent = "manifest";
+
+  var timer = setInterval(function () {
+    if (syncPayloadQueue()) clearInterval(timer);
+  }, 150);
+  setTimeout(function () { clearInterval(timer); }, 120000);
 }
 
 function watchMilestones() {
@@ -458,26 +482,24 @@ function watchMilestones() {
 }
 
 function watchPayloadProgress() {
-  /* The chain logs "<name> sent" as each one lands on elfldr. */
+  /* boot.js logs "<name> sent" as each entry lands on elfldr, in manifest
+   * order. Names come from the manifest, so nothing is matched by position. */
   var sent = {};
   var timer = setInterval(function () {
-    for (var i = 0; i < PAYLOADS.length; i++) {
-      var short = PAYLOADS[i].name.replace(".elf", "");
+    if (!payloadEntries.length) return;
+    for (var i = 0; i < payloadEntries.length; i++) {
       if (sent[i]) continue;
-      var hit = rawLogLines.some(function (l) {
-        return l.indexOf(short + ".elf sent") !== -1 ||
-               l.indexOf(short.replace(".elf", "") + " sent") !== -1;
-      });
-      if (hit) {
+      var name = payloadEntries[i].name;
+      if (rawLogLines.some(function (l) { return l.indexOf(name + " sent") !== -1; })) {
         sent[i] = true;
         sentCount++;
         setPayload(i, "sent", "sent");
-        runStats.bytes += PAYLOADS[i].size;
-        log(PAYLOADS[i].label + " -> elfldr :9021 accepted", "success");
-        stage(4, "running", sentCount + "/" + PAYLOADS.length);
+        runStats.bytes += payloadEntries[i].size || 0;
+        log(name + " -> elfldr :9021 accepted", "success");
+        stage(4, "running", sentCount + "/" + payloadEntries.length);
       }
     }
-    if (sentCount === PAYLOADS.length) {
+    if (sentCount === payloadEntries.length) {
       clearInterval(timer);
       stage(4, "done", "sent");
       log("all payloads delivered to elfldr :9021", "success");

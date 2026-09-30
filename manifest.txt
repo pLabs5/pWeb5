@@ -1,28 +1,45 @@
 # Jailbreak Store autoloader — payload manifest
 #
 # This file decides which payloads the autoloader sends to elfldr, and in what
-# order. Resolution order at runtime:
+# order. It is read at runtime by src/boot.js, not just displayed.
 #
-#   1. /data/autoldr on the console, if it exists  (highest priority)
+# Resolution order at runtime:
+#
+#   1. /data/autoldr/manifest.txt on the console, if it exists (highest priority)
 #   2. this file, fetched from the site origin
-#   3. built-in firmware default
+#   3. a built-in fallback of the three bundled payloads
 #
 # Format: one "name=url" per line. Blank lines and lines starting with # are
 # ignored. A bare "name" with no "=" is treated as payloads/<name>.
 #
-# Order matters. The list is sent to elfldr in the order written, so put the
-# payload that patches the kernel and remounts first, and the payload that
-# depends on that result second.
+# A target beginning with "/" is a path on the PS5 itself and is read straight
+# from the console's filesystem into memory; anything else is fetched over HTTP
+# from this site. Either way the bytes go to elfldr without passing through the
+# page, so a local payload costs no more than a remote one.
+#
+# ORDER MATTERS, and the gap between payloads matters more.
+#
+# etaHEN starts its FTP server the moment it lands, and shadowmountplus remounts
+# /system_ex. Sending those two close together panicked the console, so the
+# loader waits ?payloadDelay= seconds (default 5) between entries. If you add
+# payloads, keep the ones that touch mounts or network services apart.
+#
+# To load your own, drop an ELF on the console and point at it, e.g.:
+#
+#   /data/autoldr/plugins/mypayload.elf=/data/autoldr/plugins/mypayload.elf
 
 # --- default: kstuff-lite, for firmware above 10.01 ---
 kstuff-lite.elf=payloads/kstuff-lite-1.11B.elf
+
+# --- etaHEN second, on its own, so its FTP server comes up settled ---
 etahen.elf=payloads/etaHEN-Oct1.elf
+
+# --- shadowmountplus last: it remounts /system_ex, so it goes after the rest ---
+shadowmountplus.elf=payloads/shadowmountplus.elf
 
 # --- alternative: full kstuff, for firmware 10.01 and below ---
 # kstuff.elf=payloads/kstuff.elf
 # etahen.elf=payloads/etaHEN-Oct1.elf
-
-# --- example: add a third payload, e.g. shadowmountplus ---
 # shadowmountplus.elf=payloads/shadowmountplus.elf
 
 # ============================================================================

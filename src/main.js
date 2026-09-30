@@ -273,6 +273,9 @@ async function prepareRop(p) {
 
 async function main(userlandRW) {
   const { p, chain } = await prepareRop(userlandRW);
+  /* Publish the ROP handles. boot.js needs them to drive the manifest-driven
+   * payload load itself; without this they are unreachable outside main(). */
+  if (window.jb) { window.jb.p = p; window.jb.chain = chain; }
   const { runKernelExploit } = await import("./relapse_exploit.js");
   const result = await runKernelExploit(p, chain, log);
   if (!result || !result.done)
