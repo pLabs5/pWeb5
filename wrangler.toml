@@ -1,7 +1,7 @@
-name = "ps5-jailbreak-store"
+name = "pweb5"
 compatibility_date = "2026-08-12"
 
-# Workers with static assets (wrangler 4 no longer creates Pages projects).
+# Cloudflare Pages, live at https://pweb5.pages.dev. Deployed with
+# `wrangler pages deploy`, which reads pages_build_output_dir.
 # dist/ is built by tools/build.sh so .git and tools/ stay off the public URL.
-[assets]
-directory = "./dist"
+pages_build_output_dir = "./dist"

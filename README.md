@@ -4,7 +4,7 @@ A PS5 WebKit autoloader. It runs the Relapse exploit chain inside the console's
 own browser engine, reports progress as the chain runs, and pushes the jailbreak
 payloads to the console's elfldr.
 
-Live at **https://ps5-jailbreak-store.foxinwntr.workers.dev**
+Live at **https://pweb5.pages.dev**
 
 ## starting a run
 
@@ -18,7 +18,7 @@ offsets. If yours does not parse — some consoles report a different format —
 append the version by hand:
 
 ```
-https://ps5-jailbreak-store.foxinwntr.workers.dev/?fw=13.20
+https://pweb5.pages.dev/?fw=13.20
 ```
 
 A version that has no offsets file fails with a message naming the version it
@@ -193,25 +193,12 @@ python3 tools/send_elf.py payloads/JailbreakStore.elf <ps5-ip> 9021
 | `?payloadTimeout=N` | fail the payload stage after N seconds (default 120) |
 | `?payloadDelay=N` | seconds between payloads from the manifest (default 5) |
 
-## running and deploying
+## opening the site
 
-```bash
-python3 tools/serve.py     # http://127.0.0.1:8002
-./tools/build.sh           # assemble dist/
-wrangler deploy            # publish dist/
-```
+Open **https://pweb5.pages.dev** in the console's browser and press
+**JAILBREAK**. Everything after that happens on the console itself — the page
+fetches the payloads and streams them straight to elfldr, so there is nothing to
+download or unpack on a PC first.
 
-To exercise the real chain off console, spoof the user agent — the site only
-offers the run on something that looks like a PS5:
-
-```bash
-chromium --headless --no-sandbox \
-  --user-agent="Mozilla/5.0 (PlayStation 5/13.20) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Safari/605.1.15" \
-  --virtual-time-budget=20000 --dump-dom \
-  'http://127.0.0.1:8002/?auto=1&webkitTimeout=6'
-# force the kernel deadline to a short value to see the timeout path
-  'http://127.0.0.1:8002/?auto=1&webkitTimeout=300&kernelTimeout=3'
-```
-
-The chain then genuinely runs and fails in the WebKit stage, which is enough to
-prove the wiring, the offsets load and the failure path.
+The **JAILBREAK** button only appears to something the site recognises as a
+PS5. If yours never shows it, add `?auto=1` to the address to skip that check.
