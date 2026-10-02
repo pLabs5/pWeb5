@@ -1,9 +1,10 @@
 /* Boot for the Jailbreak Store.
  *
  * This replaces Relapse's own src/site.js and is the ONLY place that decides
- * how the exploit chain gets called. Every file under src/ is the upstream
- * 09f10f5 code, unmodified, and does its own reporting through the two globals
- * that upstream site.js also defined:
+ * how the exploit chain gets called. The chain itself is KAR0218's reworked
+ * Relapse (src/core.js, src/utils/mem.js, src/relapse_exploit.js, src/rop.js,
+ * src/kexp.js), which reports through the two globals upstream site.js
+ * also defined:
  *
  *   window.writeLog(message, type)   free-form log line
  *   window.jb.mark(tag, detail)      progress marker
@@ -11,16 +12,34 @@
  * Both are wired to the UI by app.js, so the exploit's own output feeds the
  * log and drives the stage list without any of it being aware of the UI.
  *
- * The payload step is where this differs from upstream in substance rather
- * than in mechanism. Relapse waits for an R2 keypress, which cannot happen
- * inside the PS5 WebView, and the list behind that keypress is hardcoded in
- * kexp.js. Here the manifest decides both which payloads load and in what
- * order, and the load runs directly against the ROP handles main.js
- * publishes. See "Payload loading" below.
+ * What stays ours, and why: upstream Relapse and KAR0218 both hardcode the
+ * plugin list and its order inside their own loaders, and drive them from a
+ * remote keypress - which cannot happen inside the PS5 WebView. Here the
+ * manifest decides both which payloads load and in what order, and the load runs
+ * directly against the ROP handles main.js publishes. See "Payload loading"
+ * below. Their chain exposes those handles exactly the same way, so none of this
+ * needed changing to take their exploit.
+ *
+ * Nothing under src/ is edited to serve the UI or the manifest. Vendored chain
+ * files differ from KAR0218 only where they had to: import paths, plus the fake
+ * cell's promotion path in mem.js. Keep it that way - re-syncing from upstream
+ * should be a diff, not a rewrite.
  */
 
-import { establishPrimitive } from "./webkit.js";
-import { installWindowP } from "./utils/mem.js";
+import { establishPrimitive, fakeCellReleased, CORE_INSTANCE } from "./core.js";
+import { installWindowP, pairStatus, memCoreInstance } from "./utils/mem.js";
+
+/* core.js is module state, and mem.js imports it separately to promote the
+ * fake cell. If those two imports ever resolve to different URLs, ES modules
+ * load two separate instances: establishPrimitive() runs on one while mem.js
+ * inspects the other, and promotion fails with a useless "pair was NOT
+ * promoted". Both sides import it without a ?v= so the URLs match, and this
+ * assertion turns any future skew into a loud failure instead of a silent
+ * one. Upstream carries the same guard against their aio.html. */
+if (CORE_INSTANCE !== memCoreInstance)
+  throw new Error(
+    "core.js module skew: boot.js and utils/mem.js loaded different instances",
+  );
 
 /* main.js appends offsets/<fw>.js with a plain <script> tag while it is being
  * parsed, and upstream site.js calls straight into the exploit without waiting
@@ -70,12 +89,11 @@ function getWebKitBase() {
   throw new Error("WebKit base not found");
 }
 
-/* establishPrimitive() returns new Promise((resolve) => {...}) - there is no
- * reject path, and webkit.js's retry() has no attempt cap, so a WebKit exploit
- * that never lands leaves the promise pending forever. The page would sit at
- * 0/5 with the log growing and never reach a verdict. Upstream gets away with
- * that because a human just reloads; here it means a UI that lies about being
- * stuck. Bound it from the outside instead of editing webkit.js. */
+/* core.js's establishPrimitive() does have a reject path now - it caps itself
+ * at maxAttempts and rejects with "gave up after N attempts" - but the cap is
+ * per placement attempt, and a run where every attempt times out slowly can
+ * still outlast the page's patience. This stays as the outer bound so a stalled
+ * WebKit stage still reaches a verdict instead of sitting at 0/5 forever. */
 function withDeadline(promise, ms, what, detail) {
   let timer;
   return Promise.race([
@@ -97,26 +115,77 @@ function withDeadline(promise, ms, what, detail) {
   ]);
 }
 
+/* Runs the WebKit bug until it yields a userland read/write primitive, then
+ * installs it.
+ *
+ * core.js's establishPrimitive takes an options object rather than a bare
+ * callback, and placement retries itself up to maxAttempts, so this no longer
+ * needs to hand it a single event handler. The onEvent hook still forwards
+ * every line to the page log: core.js reports its placement retries there and
+ * they are the only way to tell "still trying" from "stuck".
+ *
+ * installWindowP then promotes the fake cell into the real read/write pair.
+ * That promotion can fail, and on failure mem.js either leaves window.p
+ * withdrawn or reports pairStatus.error. Upstream checks pairStatus.promoted
+ * and refuses to continue; so does this, because a primitive that never
+ * promoted will fail somewhere much less legible a few stages later. */
 async function getPrimitive(timeoutMs) {
-  const primitive = installWindowP(
-    await withDeadline(
-      establishPrimitive(window.jb.mark),
-      timeoutMs,
-      "the WebKit exploit",
-    ),
+  const carrier = await withDeadline(
+    establishPrimitive({
+      /* Placement retries itself. 24 is upstream's figure: enough to ride out
+       * a run where the heap is in a bad shape, without letting a genuinely
+       * dead firmware sit here for many minutes. */
+      maxAttempts: 24,
+      onEvent(tag, detail, attempt) {
+        window.writeLog(
+          (typeof attempt === "number" ? "[" + attempt + "] " : "") + tag +
+            (detail ? " " + detail : ""),
+          "info",
+        );
+      },
+      beforeCriticalLoad() {
+        /* core.js lays out this page's own DOM immediately before the critical
+         * WebKit load, and placement is sensitive to what is sitting on the
+         * heap there. Touching layout is what gives it a reason to be there.
+         * Upstream pokes their #console; ours is the #log pane. */
+        try {
+          $("log").offsetWidth;
+        } catch (e) {}
+      },
+    }),
+    timeoutMs,
+    "the WebKit exploit",
   );
+
+  installWindowP(carrier, {
+    onEvent(tag, detail) {
+      window.writeLog(tag + " " + detail, "info");
+    },
+  });
+
+  if (!pairStatus.promoted)
+    throw new Error(
+      "the primitive pair was not promoted: " + (pairStatus.error || "unknown"),
+    );
+
+  const primitive = globalThis.p;
   if (!primitive || typeof primitive.read8 !== "function")
     throw new Error("Memory primitive unavailable");
+
+  window.writeLog(
+    "primitive up (fakeCellReleased=" + fakeCellReleased() + ")",
+    "success",
+  );
   return primitive;
 }
 /* ------------------------------------------------------------------ *
  * Payload loading
  *
- * kexp.js can already send an ELF that is mapped in ROP memory, but its
- * mapElf/sendElf pair is private to that module and loadOptionalPayloads
- * hardcodes the payload list and its ordering. The manifest is what should
- * decide both, so the loading is done here instead, against the handles
- * main.js publishes on window.jb. kexp.js itself is left untouched.
+ * The chain's kexp.js brings elfldr up and then stops - it exports only
+ * runKexp, and has no idea a payload list exists. That is deliberate: upstream
+ * Relapse and KAR0218 both hardcode the plugin list and its order inside their
+ * own loaders. The manifest decides both here instead, against the handles
+ * main.js publishes on window.jb, so the chain is not edited to serve it.
  *
  * A payload is loaded straight into ROP memory and streamed to elfldr from
  * there, so a payload that lives on the console costs the same as one fetched
@@ -474,7 +543,15 @@ function waitForPayloads(timeoutMs) {
 
     const timer = setInterval(() => {
       const lines = window.jb.logLines || [];
-      if (lines.some((l) => /elfldr is not listening/.test(l)))
+      /* The chain reports a failed kexp handoff in its own words now
+       * ("elfldr is not confirmed up" / "kexp threw"), and main.js logs the
+       * case where the kernel stage finished without elfldr. Any of those means
+       * there is no listener to send plugins to. */
+      if (lines.some((l) =>
+            /elfldr is not listening/.test(l) ||
+            /elfldr is not confirmed up/.test(l) ||
+            /elfldr did not confirm up/.test(l) ||
+            /^ELFLDR kexp threw/.test(l)))
         done(false, "elfldr is not listening on port 9021");
       else {
         const entries = window.jb.payloadEntries;
@@ -487,13 +564,31 @@ function waitForPayloads(timeoutMs) {
   });
 }
 
-/* The last "Kernel: ..." line the exploit reported, so a timeout can name the
- * phase it stalled in. */
+/* The last kernel-stage line the chain reported, so a timeout can name the
+ * phase it stalled in instead of just failing.
+ *
+ * The older chain tagged this stage "Kernel: ...". KAR0218's uses short stage
+ * tags instead, so match those too - otherwise a kernel timeout could not say
+ * where it got stuck, which was the entire reason this function exists.
+ *
+ * The separator is a single space, not ": ": relapse_exploit.js report()
+ * builds its line as tag + " " + detail, and main.js hands report() straight to
+ * window.writeLog, which stores the message verbatim. Expecting ": " here meant
+ * no line ever matched and every timeout reported "unknown".
+ *
+ * Every tag the chain emits is listed, because withDeadline wraps all of
+ * main() and the whole driver lives inside it - START is the first line of the
+ * run and DONE the last, so a stall anywhere in between still has to be
+ * nameable. Keeping the list complete is the point; harness.js asserts that no
+ * tag the chain can emit is missing here. */
+const KERNEL_STAGE_TAGS =
+  /^(?:Kernel:|BOOT|DEFUSE|DONE|ELFLDR|ESC|FAIL|FAST|KASLR|KEXP|KREAD|PARK|PIN|PIPE|PROC|RESCUE|START|STOP|UNPIN|VERIFY) (.+)$/;
+
 function lastKernelPhase() {
   const lines = window.jb.logLines || [];
   for (let i = lines.length - 1; i >= 0; i--) {
-    const m = /^Kernel: (.+)$/.exec(lines[i]);
-    if (m) return m[1];
+    const m = KERNEL_STAGE_TAGS.exec(lines[i]);
+    if (m) return m[1] + ": " + m[2];
   }
   return "unknown";
 }
@@ -534,23 +629,36 @@ export async function boot() {
   window.writeLog("ARW ready", "success");
   window.jb.mark("WebKit", "base 0x" + getWebKitBase().toString(16));
 
-  /* main() runs prepareRop + the kernel exploit and then registers the R2
-   * listener, which is what used to hand the payload list to kexp.js. We do
-   * not press R2: the manifest decides the payload list and its order, and
-   * kexp's copy is hardcoded, so the load is driven from here instead. The
-   * wait is armed first so the first payload line is not missed. */
+  /* main() runs prepareRop and then the kernel exploit, which ends by handing
+   * off to kexp so elfldr comes up on 9021. The payload list is NOT driven by
+   * an R2 press: the manifest decides what loads and in what order, so the load
+   * is driven from here against the same ROP handles main.js publishes.
+   *
+   * The wait is armed BEFORE main() so the first payload line cannot be missed. */
   const payloads = waitForPayloads(payloadTimeout).catch((e) => {
     window.jb.mark("Autoload", e.message);
     return e;
   });
 
-    await withDeadline(main(primitive), kernelTimeout, "the kernel stage", () => {
-      const phase = lastKernelPhase();
-      return phase === "unknown" ? null : phase;
-    });
+  await withDeadline(main(primitive), kernelTimeout, "the kernel stage", () => {
+    const phase = lastKernelPhase();
+    return phase === "unknown" ? null : phase;
+  });
 
   if (!window.jb.chain || !window.jb.p)
     throw new Error("the kernel stage did not publish its ROP handles");
+
+  /* No elfldr means nothing can receive the plugins. main() logs that case and
+   * records it here, so stop rather than stream payloads at a closed port and
+   * report it as a plugin failure. */
+  if (!window.jb.elfldr) {
+    window.jb.payloadsDone = true;
+    window.jb.mark("Autoload", "elfldr never confirmed up on port 9021");
+    throw new Error(
+      "the kernel stage finished but elfldr is not listening on port 9021, " +
+        "so there is nowhere to send the plugins",
+    );
+  }
 
   await loadPayloads(window.jb.p, window.jb.chain);
   return payloads;

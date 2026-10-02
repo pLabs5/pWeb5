@@ -11,7 +11,9 @@ OUT=dist
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
-cp index.html style.css app.js manifest.txt _headers "$OUT/"
+# LICENSE ships with the deploy: GPLv3 section 4/6 requires conveying the
+# licence and copyright notice with both source and object forms.
+cp index.html style.css app.js manifest.txt _headers LICENSE "$OUT/"
 cp -r src offsets payloads fonts "$OUT/"
 
 # Unmistakable per-deploy tag, fixed to the bottom-left corner: the console

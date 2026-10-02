@@ -21,7 +21,18 @@ var STAGES = [
 ];
 
 /* Where each upstream reporter's output belongs. The chain emits its own
- * tag strings, so rather than patching it we map the tags onto stages. */
+ * tag strings, so rather than patching it we map the tags onto stages.
+ *
+ * Stages 0 and 1 (WebKit, ROP worker) are tagged by our own boot.js and
+ * main.js, plus core.js's placement attempts. Stages 2 and 3 are tagged by
+ * KAR0218's chain through window.__rep - it replaced the older chain, which used
+ * the "oid"/"oid steering"/"Cleanup" style tags, so both sets are kept.
+ *
+ * Every tag the chain can emit has to be here. It reaches this table via
+ * window.__rep (see below), and withDeadline wraps all of main(), so a tag left
+ * out just means the stage list stops naming phases partway through a run.
+ * FAIL and STOP are deliberately absent: those are terminal, and the run throws
+ * rather than progressing. */
 var TAG_STAGE = {
   "WebKit": 0,
   "Attempt": 0,
@@ -49,6 +60,25 @@ var TAG_STAGE = {
   "kernel rw": 2,
   "Cleanup": 2,
   "kexp": 3,
+  /* Kar0218's driver: everything from START to DONE is inside run(), which is
+   * the kernel stage; only the kexp/elfldr handoff is stage 3. */
+  "START": 2,
+  "BOOT": 2,
+  "KASLR": 2,
+  "PIN": 2,
+  "UNPIN": 2,
+  "PARK": 2,
+  "FAST": 2,
+  "KREAD": 2,
+  "PROC": 2,
+  "PIPE": 2,
+  "ESC": 2,
+  "VERIFY": 2,
+  "DEFUSE": 2,
+  "RESCUE": 2,
+  "DONE": 2,
+  "KEXP": 3,
+  "ELFLDR": 3,
   "Autoload": 4
 };
 
@@ -59,6 +89,11 @@ var TAG_STAGE = {
 var MILESTONES = [
   { line: "ARW ready",                     stage: 0, label: "ready" },
   { line: "Worker chain: ready",           stage: 1, label: "ready" },
+  /* Stage 2 is "kernel rw and root". The chain used to end this stage with a
+   * "privileges ready" line; KAR0218's version reports ESC with the uid/sandbox
+   * transition instead, which is a stronger claim: root and out of sandbox are
+   * both confirmed by reading them back, not assumed. Match on that. */
+  { line: "ROOT, OUT OF SANDBOX",          stage: 2, label: "ready" },
   { line: "privileges ready",              stage: 2, label: "ready" },
   { line: "elfldr is listening on 9021",  stage: 3, label: "listening" },
   { line: "elfldr is listening on port 9021", stage: 3, label: "listening" }
@@ -303,9 +338,10 @@ var runTerminal = false;
 
 window.writeLog = function (message, type, replace) {
   rawLogLines.push(String(message));
-  /* webkit.js's retry loop is uncapped, so once we have given up on the chain
-   * it can keep emitting for a while. Stop rendering those, or the log grows
-   * under a verdict that has already been reached. */
+  /* The chain can keep emitting after a stage has been given up on - a slow
+   * placement retry, or a kernel round trip that eventually lands. Keep
+   * collecting the raw lines, since the verdict reasons about them, but stop
+   * rendering, or the log grows under a verdict that has already been reached. */
   if (runTerminal) return;
   /* An unrecognised level would land as a bare class name with no rule behind
    * it, so map the ones the site uses onto the styles that exist. */
@@ -316,6 +352,15 @@ window.writeLog = function (message, type, replace) {
   log(message, level);
 };
 
+/* Progress tags only ever mark a stage as the current one. Completion is
+ * handled by the milestone watcher, because tag details are free text. */
+function markStage(name, detail) {
+  var idx = TAG_STAGE[name];
+  if (idx === undefined || stageOnce[idx]) return;
+  if (name === "Offsets" || name === "Autoload") return;
+  stage(idx, "running", String(detail || "").split(" ")[0] || "run");
+}
+
 window.jb = {
   logLines: rawLogLines,
   payloadsDone: false,
@@ -324,14 +369,18 @@ window.jb = {
              : String(name) + ": " + String(detail);
     var isFail = /Failed|failed/.test(String(name));
     window.writeLog(text, isFail ? "error" : "info");
-
-    /* Progress tags only ever mark a stage as the current one. Completion is
-     * handled by the milestone watcher, because tag details are free text. */
-    var idx = TAG_STAGE[name];
-    if (idx === undefined || stageOnce[idx]) return;
-    if (name === "Offsets" || name === "Autoload") return;
-    stage(idx, "running", String(detail || "").split(" ")[0] || "run");
+    markStage(name, detail);
   }
+};
+
+/* The exploit chain reports through report(tag, detail), not through
+ * jb.mark(). Its log line reaches the page separately, via main.js's log()
+ * callback, so this must only drive the stage list - logging again here would
+ * print every phase twice. Without this hook the chain's tags never reach
+ * TAG_STAGE at all and the stage list sits on its first phase for the whole
+ * kernel run. */
+window.__rep = function (tag, detail) {
+  markStage(tag, detail);
 };
 
 

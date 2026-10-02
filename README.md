@@ -1,30 +1,36 @@
-# ps5-jailbreak-store
+# pWeb5
 
-A PS5 WebKit autoloader. It runs the Relapse exploit chain inside the console's
-own browser engine, reports progress as the chain runs, and pushes the jailbreak
-payloads to the console's elfldr.
+A PS5 jailbreak autoloader that runs in the console's own browser. It executes
+the exploit chain in the page, shows you what it is doing while it does it, and
+pushes the homebrew payloads to the console once the chain is up.
 
 Live at **https://pweb5.pages.dev**
 
-## starting a run
+The exploit chain is [KAR0218's rework of Relapse](https://github.com/KAR0218/KAR0218.github.io/tree/main/ps5/relapse),
+which is built on [Relapse](https://github.com/RedPeaSolutions/Relapse-Exploit)
+and verifies each step instead of assuming it worked. Firmware **7.00 through
+13.60**.
 
-Nothing happens on load. Press **JAILBREAK** and the button removes itself —
-the WebKit stage sprays the moment it starts and there is no undo.
+## running it
 
-## firmware detection
+Open **https://pweb5.pages.dev** in the console's browser and press
+**JAILBREAK**.
 
-The site reads the firmware from the user agent and loads the matching
-offsets. If yours does not parse — some consoles report a different format —
-append the version by hand:
+Nothing happens on load — the button is there on purpose. The chain sprays
+memory the moment it starts and there is no undo, so it waits for a deliberate
+click.
 
-```
-https://pweb5.pages.dev/?fw=13.20
-```
+You need the console on the internet and a browser pointed at that address.
+Nothing is downloaded or unpacked on a PC first; the page fetches the payloads
+and streams them to the console itself.
 
-A version that has no offsets file fails with a message naming the version it
-wanted, rather than refusing to start.
+The **JAILBREAK** button only appears to something the site recognises as a
+PlayStation 5. Opened on a desktop it just says so, because there is no WebKit
+there to exploit and no console to send anything to.
 
-## stages
+## what happens
+
+Five stages, in order:
 
 | # | stage | what it covers |
 |---|-------|----------------|
@@ -32,56 +38,82 @@ wanted, rather than refusing to start.
 | 2 | rop worker | worker stack discovery and the ROP chain |
 | 3 | kernel | kernel rw, process, pipes, privileges |
 | 4 | elfldr | kexp loads, elfldr listens on :9021 |
-| 5 | autoload | the payload chain, sent to elfldr in order |
+| 5 | autoload | the plugin chain, sent to elfldr in order |
 
-## payloads
+Each one ticks off as it completes and the log below shows the chain's own
+output. At the end you get a verdict — **JAILBROKEN** or **FAILED** — with a
+summary: firmware, viewport, which manifest was used, which plugins were sent,
+how many bytes moved, and how long it took. **view run** puts the full log back.
 
-`manifest.txt` decides these, and the order, and the loader sends them in that
-order to `127.0.0.1:9021`:
+If a stage stalls, the page gives up on it rather than sitting there forever, and
+says which phase it stalled in.
 
-| fetched as | actually is |
-|---|---|
-| `kstuff-lite.elf` | kstuff-lite 1.11B |
-| `etahen.elf` | the current etaHEN build |
-| `shadowmountplus.elf` | shadowmountplus |
+Stage 4 is a hard gate. elfldr has to actually confirm it is listening on 9021
+before any plugin is sent, so a run that got root but no elfldr reports that
+plainly instead of streaming payloads at a closed port and calling it a plugin
+failure.
 
-### manifest format
+### the run checks its own work
 
-One `name=target` per line. `#` starts a comment, blank lines are skipped, and a
-bare `name` with no `=` is `payloads/<name>`. A target is one of three things:
+This is the part that differs from the original chain. It does not assume a step
+worked:
 
-| target | where it comes from |
-|---|---|
-| `payloads/<file>` | a file on this site |
-| `https://host/<file>` | anywhere else, if the host serves it |
-| `local:/data/autoldr/<file>` | a file already on the console |
+- The WebKit primitive retries its own placement, up to 24 attempts, and says
+  which attempt it is on.
+- The fake memory cell is promoted into a real read/write pair, and **that
+  promotion is verified**. If it fails, its rollback is verified too — and if
+  the rollback cannot be confirmed, `window.p` is withdrawn rather than left
+  published mis-aimed.
+- The kernel stage confirms its own output: arbitrary kernel read is read back,
+  your process is found in `allproc`, and root and out-of-sandbox are checked by
+  reading your uid and sandbox flag *after* writing them, not assumed from the
+  write succeeding.
+- The master/victim pipe pair is created and both ends are verified as ours.
+- The walk counter is checked to make sure it does not move on its own, and a
+  walk that does is stopped instead of being trusted.
+- Failed steps are retried rather than carried forward.
 
-A remote host has to send `Access-Control-Allow-Origin` or the WebView fetch
-fails — which is why the release-asset CDN on `github.com` does not work as a
-target, while `raw.githubusercontent.com` does. Any other scheme is rejected and
-fails the run rather than being fetched as a path on this site.
+A step that cannot be made to work reports `NO-GO` or `STOP` with the reason and
+stops the run. You get a failed run with an explanation instead of a run that
+reports success on a half-built primitive.
 
-### local payloads
+## what you get
 
-`local:` targets are the ones that need no host at all. Drop the ELF in
-`/data/autoldr/` on the console, point the manifest at it, and the loader opens
-it after the kernel stage and streams it to elfldr exactly like a fetched one —
-the bytes never pass through the page, so a local payload costs the same as a
-remote one. The file has to be there before the run starts; the site has no way
-to put it there, deliberately.
+The plugin list is not hardcoded in the page — it comes from `manifest.txt`,
+which also decides the order:
 
-Only `/data/autoldr/` is reachable, so a manifest cannot talk the exploit into
-opening an arbitrary path on the console. A `..` segment is rejected as well —
-the kernel would resolve it after the prefix check, so the prefix alone is not
-confinement. The mapping is sized from the file with `lseek` rather than a fixed
-ceiling — the ceiling version reserved 16MB per candidate and two of those was
-what wedged the exploit when this path was pulled in `4ba38c6`.
+| plugin | what it is |
+|--------|------------|
+| kstuff-lite | the kernel payload everything else needs |
+| etaHEN | the homebrew installer environment |
+| shadowmountplus | remounts `/system_ex`, so more can be written to it |
 
-### personal plugins: /data/autoldr/manifest.txt
+Which kstuff build loads is your firmware's decision, not yours: full kstuff up
+to and including 10.01, kstuff-lite above that.
 
-To add a plugin without editing this repo's `manifest.txt`, drop a manifest at
-`/data/autoldr/manifest.txt` on the console. It **replaces** the site manifest —
-your list, your order, your plugins:
+There is a **5 second gap between plugins**, and it matters. etaHEN starts its
+FTP server the moment it lands and shadowmountplus remounts `/system_ex`;
+sending them close together panics the console. Each one is fetched, streamed to
+elfldr, and confirmed before the next starts.
+
+### etaHEN has stopped working
+
+`payloads/etaHEN.elf` is time-limited and the bundled build **expired on
+1 October 2026**.
+
+This does not fail loudly. The send still succeeds, so it looks like a
+successful run followed by nothing happening. If etaHEN is what you came for,
+you need a newer build dropped into the plugin list — see below.
+
+## using your own plugins
+
+You do not need to edit anything on the site. Put a manifest on the console at:
+
+```
+/data/autoldr/manifest.txt
+```
+
+and it **replaces** the site's list entirely — your plugins, your order:
 
 ```
 # /data/autoldr/manifest.txt
@@ -89,116 +121,110 @@ ProsperoMgr.elf=local:/data/autoldr/plugins/ProsperoMgr.elf
 etahen.elf=payloads/etaHEN.elf
 ```
 
-Nothing from the site manifest is loaded once yours exists, so name anything you
-still want. Same format and same three target forms, `local:` included.
+Nothing from the site list loads once yours exists, so name anything you still
+want. Format is one `name=target` per line; `#` starts a comment and blank lines
+are skipped. A bare `name` with no `=` means `payloads/<name>`.
 
-**kstuff is the exception.** It always loads first, because it is the payload
-that makes the rest work, and you don't have to name it. The build is the
-firmware's choice: full kstuff up to and including 10.01, kstuff-lite above that.
-Name `kstuff.elf` or `kstuff-lite.elf` yourself and yours is used instead of that
-pick, which is how you pin a build.
+A target is one of three things:
 
-It is read after the kernel stage, the first point the chain can read the
-console's filesystem at all. A missing file is the normal case and changes
-nothing; a file that exists but names something invalid fails the run, so a typo
-can't look like a successful run.
+| target | where it comes from |
+|--------|---------------------|
+| `payloads/<file>` | a file on this site |
+| `//host/path` or `https://host/path` | anywhere else, if that host allows it |
+| `local:/data/autoldr/<file>` | a file already on the console |
 
-Two things worth knowing:
+A remote host has to send `Access-Control-Allow-Origin` or the fetch fails and
+the run reports which URL would not load. That is why GitHub release assets do
+not work as a target but `raw.githubusercontent.com` does. Any other scheme is
+rejected and fails the run, rather than being fetched as a path on this site.
 
-- Ordering is now yours. `shadowmountplus` remounts `/system_ex` and the console
-  panics when the mount- and network-touching payloads land close together, so
-  keep it last in your list. The `?payloadDelay=` gap still applies to every
-  entry.
-- The local file is a plain text read, not an ELF mapping, so it costs one small
-  buffer rather than a mapping — which is what the removed version got wrong.
+`kstuff` is the exception — it always loads first, because it is what makes the
+rest work, and you do not have to name it. Name `kstuff.elf` or
+`kstuff-lite.elf` yourself and that one is used instead of the firmware pick, so
+you can pin a build.
 
-This is a different path from the one removed in `4ba38c6`. That one read a
-local *manifest* through the ELF-only mapper, so it could only ever fail, and it
-reserved 16MB per candidate before any payload loaded, which is what wedged the
-exploit. Local *payloads* never had the bug; they just had no way to be listed.
+**Be honest about the risk here:** only `/data/autoldr/` is reachable with a
+`local:` target, `..` is rejected, and the file has to be on the console before
+the run starts. But a console-local manifest and `local:` plugins are new, and
+neither has been run on real hardware. The site's own manifest works; treat your
+own as untested.
 
-### etaHEN expires on 1 October
+## making the Store tile your launcher
 
-`payloads/etaHEN.elf` stops working on 1 October 2026. The send still succeeds
-afterwards, so it looks like a successful run followed by nothing happening.
-Pull the new build from the etaHEN Discord, replace the file, and update the
-expiry comment in `manifest.txt` — the filename no longer carries the date.
+After a successful run the verdict screen offers **APPLY TO PS STORE**. That
+sends `JailbreakStore.elf` to elfldr, which renames the PS Store tile
+(`NPXS40047`) to *Jailbreak Store* and repoints it at this site — so from then
+on you tap the tile instead of finding a URL.
 
-### shadowmountplus can block etaHEN
+It changes nothing about the app itself and deletes no rows, so you can undo it
+by removing the `DEEPLINK_URI` entry from the tile's metadata and putting the
+real store back. **A PS5 reboot is needed** either way for the tile to change.
 
-Worth knowing before you rely on a run. `loadOptionalPayloads` fetches and maps
-all three payloads before sending any of them, and has no error handling. So:
-
-- if `shadowmountplus.elf` fails to download, **kstuff never loads either**
-- it is sent between kstuff and etaHEN, so if it fails to send, **etaHEN is
-  never sent** — and the run still reports success
-
-It is also unlikely to work on 13.20 with kstuff-lite, since it wants full
-kstuff. This is the one payload whose behaviour on console is unverified.
-
-## the PS Store installer
-
-After a successful run the verdict screen offers to send
-`JailbreakStore.elf` to elfldr. That renames the `NPXS40047` tile to *Jailbreak
-Store* and repoints it at this site, so tapping it starts the exploit. Optional,
-and only offered on a successful run. A PS5 reboot is needed afterwards.
-
-It writes a deeplink pointer and the title/icon names. It deletes nothing and
-the app content is untouched, so removing the `DEEPLINK_URI` row puts the real
-store back.
-
-The button is a plain `no-cors` POST to `127.0.0.1:9021` rather than the syscall
-socket the exploit payloads use, because the chain's handles live inside the ROP
-web worker and are not reachable from page script. That works in a normal
-browser, but the loopback mixed-content exemption is **not confirmed on the
-PS5's WebView**. If the button reports a failure, send the ELF from a PC:
+If the button reports a failure, the ELF can be sent from a PC instead:
 
 ```bash
 python3 tools/send_elf.py payloads/JailbreakStore.elf <ps5-ip> 9021
 ```
 
-## known issues
+## firmware
 
-- **The webkit stage can hang.** Upstream `webkit.js` has no reject path and no
-  cap on its retries, so a WebKit exploit that never lands leaves the run
-  pending forever. The site bounds it from the outside and fails the run instead
-  of hanging silently.
-- **The kernel stage can hang.** `defuseAioGroups()` walks every armed AIO group
-  and clears it, and each group costs a lookup, two reads, and up to three
-  write-and-verify attempts through the ROP primitive. It has no bound of its
-  own, so a run that goes wrong can sit on `Kernel: checking aio groups` with the
-  page never reaching a verdict, which leaves the console unable to finish
-  rebooting. The site bounds the stage and reports the phase it stalled in.
-- **Offsets are per-firmware.** `offsets/` is stock Relapse `09f10f5` and must
-  stay; a version with no offset file cannot run.
-- Everything under `src/` is stock Relapse `09f10f5` except `main.js`, which
-  publishes the ROP handles and `boot.js`, which owns the manifest and timeouts.
-  `relapse_exploit.js`, `webkit.js`, `rop.js`, and `kexp.js` are byte-for-byte
-  against the tag `vendor/relapse-09f10f5`. An earlier one-line fix to an
-  `aio_multiwait` timeout was reverted: upstream waits 10ms via `tv_usec`, and
-  writing the value as `tv_sec` instead turned a rare 2.8h stall into a stall on
-  the normal path.
-- The payload list and spacing come from `manifest.txt`; `src/kexp.js`'s own
-  hardcoded list is unused.
+The version is read from the browser's user agent. If yours does not parse —
+the format varies by region and firmware — set it yourself:
+
+```
+https://pweb5.pages.dev/?fw=13.20
+```
+
+Offsets only exist for versions the upstream chain shipped, so an unsupported
+firmware fails with a message naming the version it wanted rather than just
+refusing. Two-digit minors are normalised, so `13.2` and `13.20` are the same.
 
 ## query flags
 
 | flag | effect |
 |------|--------|
-| `?fw=13.20` | force the firmware version |
-| `?auto=1` | skip the start gate |
+| `?fw=13.20` | set the firmware version by hand |
+| `?auto=1` | skip the start button |
 | `?measure=1` | show the WebView viewport report |
-| `?webkitTimeout=N` | fail the webkit stage after N seconds (default 300) |
-| `?kernelTimeout=N` | fail the kernel stage after N seconds (default 240) |
-| `?payloadTimeout=N` | fail the payload stage after N seconds (default 120) |
-| `?payloadDelay=N` | seconds between payloads from the manifest (default 5) |
+| `?webkitTimeout=N` | give up on the webkit stage after N seconds (default 300) |
+| `?kernelTimeout=N` | give up on the kernel stage after N seconds (default 600) |
+| `?payloadTimeout=N` | give up on the plugin stage after N seconds (default 120) |
+| `?payloadDelay=N` | seconds between plugins (default 5) |
 
-## opening the site
+Lowering a timeout does not make the chain faster, it only makes the page stop
+waiting. The defaults are generous on purpose — the kernel stage can legitimately
+sit on `checking aio groups` for minutes on a good run.
 
-Open **https://pweb5.pages.dev** in the console's browser and press
-**JAILBREAK**. Everything after that happens on the console itself — the page
-fetches the payloads and streams them straight to elfldr, so there is nothing to
-download or unpack on a PC first.
+## if it goes wrong
 
-The **JAILBREAK** button only appears to something the site recognises as a
-PS5. If yours never shows it, add `?auto=1` to the address to skip that check.
+**The webkit stage hangs.** Placement retries up to 24 times, but the cap is
+per attempt, so a run where every attempt times out slowly would still leave the
+run pending. The page bounds the whole stage and fails the run instead of hanging
+silently. The log tells you which attempt it was on.
+
+**The kernel stage hangs.** It walks every armed AIO group and clears it, one
+kernel round trip at a time. On a bad run this used to sit forever and leave the
+console unable to finish a reboot. It is bounded now, and the failure names the
+phase it got stuck in.
+
+**`offsets/<version>.js never loaded`.** That firmware has no exploit offsets.
+Nothing about this site will fix it.
+
+**A plugin fails to load.** The run stops and names the file. Whatever was sent
+before it stays sent — plugins are delivered one at a time, in order.
+
+**It only works on a subset of firmware.** Offsets are per-version and cover
+7.00–13.60. There is no fallback for a version outside that.
+
+## licence
+
+**GPLv3.** Full text in [`LICENSE`](LICENSE).
+
+pWeb5 is free software: you can use, study, share and modify it. If you
+redistribute it, or ship a modified version, you have to pass the same licence on
+and make your source available.
+
+The exploit chain under `src/` is KAR0218's rework of Relapse, adapted here (see
+the top of [`src/boot.js`](src/boot.js) for exactly what changed). The bundled
+plugin binaries under `payloads/` are third-party builds and keep their own
+terms — they are redistributed, not relicensed.

@@ -80,18 +80,6 @@ function log(message, type = "log") {
   window.writeLog(message, type);
 }
 
-function watchR2(onPress) {
-  function onKey(event) {
-    if (event.key !== "F8" || event.code !== "Unidentified") return;
-    window.removeEventListener("keydown", onKey, true);
-    event.preventDefault();
-    onPress();
-  }
-
-  log("press R2 to load kstuff, shadowmountplus and etaHEN", "info");
-  window.addEventListener("keydown", onKey, true);
-}
-
 const ROP_WAIT_MS = 20000;
 
 function jbmark(tag, detail) {
@@ -276,25 +264,33 @@ async function main(userlandRW) {
   /* Publish the ROP handles. boot.js needs them to drive the manifest-driven
    * payload load itself; without this they are unreachable outside main(). */
   if (window.jb) { window.jb.p = p; window.jb.chain = chain; }
+  /* The chain returns elfldr:true only once it has confirmed elfldr is actually
+   * listening on 127.0.0.1:9021 - KAR0218's version checks that inside the
+   * kernel stage rather than assuming it. That is the signal boot.js waits on
+   * before it starts the manifest-driven payload load, so a run that got root
+   * but no elfldr must not silently continue into a payload stage that cannot
+   * work. */
   const { runKernelExploit } = await import("./relapse_exploit.js");
   const result = await runKernelExploit(p, chain, log);
   if (!result || !result.done)
     throw new Error("kernel exploit did not finish");
 
-  if (result.payloads) {
+  if (window.jb) window.jb.elfldr = !!result.elfldr;
+
+  if (result.elfldr) {
     log("kernel exploit complete", "info");
     log("elfldr is listening on port 9021", "info");
-    watchR2(async () => {
-      try {
-        const { loadOptionalPayloads } = await import("./kexp.js");
-        await loadOptionalPayloads(p, chain, (message) => log(message, "info"));
-      } catch (error) {
-        log(error instanceof Error ? error.message : String(error), "error");
-      }
-    });
   } else {
-    log("kernel chain complete: root and sandbox escape are active", "info");
+    log(
+      "kernel chain complete: root and sandbox escape are active, but elfldr did not confirm up",
+      "warning",
+    );
   }
+
+  /* No R2 listener here on purpose. Upstream waits for a keypress that cannot
+   * happen inside the PS5 WebView and then sends a hardcoded payload list;
+   * boot.js drives the manifest instead, against these same ROP handles, which
+   * it reads from window.jb.p / window.jb.chain. */
 }
 
 const fwScript = document.createElement("script");
