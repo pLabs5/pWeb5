@@ -4,4 +4,21 @@ compatibility_date = "2026-08-12"
 # Cloudflare Pages, live at https://pweb5.pages.dev. Deployed with
 # `wrangler pages deploy`, which reads pages_build_output_dir.
 # dist/ is built by tools/build.sh so .git and tools/ stay off the public URL.
+#
+# The build command is NOT here on purpose. The Pages Git integration rejects
+# it: adding `command = "..."` to this file fails the build with "Unexpected
+# fields found in top-level field: command", then carries on with "No build
+# command specified" and dies on the missing dist/ just the same.
+#
+# So it lives in the Cloudflare dashboard instead, under Settings > Builds &
+# deployments:
+#
+#   Build command           bash tools/build.sh
+#   Build output directory  dist
+#   Root directory          (blank)
+#
+# Nothing here needs compiling - tools/build.sh only copies the site files into
+# dist/ and stamps the build tag. A command is needed purely because dist/ is
+# gitignored, so the clone has no output directory without one. Serving the repo
+# root instead would publish .git and every file the console never loads.
 pages_build_output_dir = "./dist"
