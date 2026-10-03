@@ -3,5 +3,17 @@ compatibility_date = "2026-08-12"
 
 # Cloudflare Pages, live at https://pweb5.pages.dev. Deployed with
 # `wrangler pages deploy`, which reads pages_build_output_dir.
-# dist/ is built by tools/build.sh so .git and tools/ stay off the public URL.
+#
+# command is what makes the Pages Git integration work. Nothing here needs
+# compiling - tools/build.sh only copies the site files into dist/ and stamps
+# the build tag - but pages_build_output_dir points at dist/, and dist/ is
+# gitignored so the repo never carries it. Without a command, Pages clones the
+# repo, skips the build, and then fails with 'Output directory "dist" not
+# found'. Locally `wrangler pages deploy dist` bypasses this by taking the
+# directory as an argument; the Git integration has no such argument and relies
+# on this.
+#
+# dist/ is the point of the exercise: it keeps .git and tools/ off the public
+# URL, so only what the console actually loads gets published.
+command = "bash tools/build.sh"
 pages_build_output_dir = "./dist"
