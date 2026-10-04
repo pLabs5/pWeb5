@@ -11,6 +11,17 @@ which is built on [Relapse](https://github.com/RedPeaSolutions/Relapse-Exploit)
 and verifies each step instead of assuming it worked. Firmware **7.00 through
 13.60**.
 
+> [!WARNING]
+> This runs a kernel exploit chain against a console you have to own. Spraying
+> memory has no undo: a chain that goes wrong can leave the console unable to
+> boot, and firmware updates close the offsets it depends on. Use at your own
+> risk, on a console you are willing to recover.
+
+> [!NOTE]
+> I am not responsible for any damages or consequences directly caused by this
+> software, including but not limited to console system software corruption, data
+> loss, or anything else arising from its use.
+
 ## running it
 
 Open **https://pweb5.pages.dev** in the console's browser and press
@@ -218,13 +229,29 @@ before it stays sent — plugins are delivered one at a time, in order.
 
 ## licence
 
-**GPLv3.** Full text in [`LICENSE`](LICENSE).
+**AGPLv3.** Full text in [`LICENSE`](LICENSE).
 
-pWeb5 is free software: you can use, study, share and modify it. If you
-redistribute it, or ship a modified version, you have to pass the same licence on
-and make your source available.
+  pWeb5 is free software: you can use, study, share and modify it. If you
+  redistribute it, or ship a modified version, you have to pass the same licence on
+  and make your source available.
+
+  The Affero part matters here specifically because this site is served over a
+  network. If you run a modified copy and let other people reach it — a fork on
+  Pages, a mirror, a self-hosted build — section 13 requires you to offer those
+  users the corresponding source. Keep the source link visible and don't strip it
+  from a fork's front page.
 
 The exploit chain under `src/` is KAR0218's rework of Relapse, adapted here (see
 the top of [`src/boot.js`](src/boot.js) for exactly what changed). The bundled
 plugin binaries under `payloads/` are third-party builds and keep their own
 terms — they are redistributed, not relicensed.
+
+## legal
+
+pWeb5 is by foxinwinter / pawprnt, who is not affiliated with, associated with,
+sponsored by, endorsed by, or otherwise established with Sony Interactive
+Entertainment, PlayStation, or any of their other companies or works.
+
+This site is provided "as is", without warranty of any kind, express or implied.
+Use of it is at your own risk. You are solely responsible for complying with
+PlayStation's terms and any applicable law.

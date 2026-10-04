@@ -11,8 +11,9 @@ OUT=dist
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
-# LICENSE ships with the deploy: GPLv3 section 4/6 requires conveying the
-# licence and copyright notice with both source and object forms.
+# LICENSE ships with the deploy: AGPLv3 section 4/6 requires conveying the
+# licence and copyright notice with both source and object forms, and section 13
+# wants the source reachable from wherever the site is served.
 cp index.html style.css app.js manifest.txt _headers LICENSE "$OUT/"
 cp -r src offsets payloads fonts "$OUT/"
 
