@@ -51,7 +51,6 @@ kstuff-lite.elf=payloads/kstuff-lite-1.11B.elf
 # --- etaHEN second, on its own, so its FTP server comes up settled ---
 etahen.elf=payloads/etaHEN.elf
 
-dRPC5.elf=payloads/dRPC5.elf
 
 # --- shadowmountplus t: it remounts /system_ex, so it goes after the rest ---
 shadowmountplus.elf=payloads/shadowmountplus.elf
