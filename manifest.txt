@@ -52,7 +52,7 @@ kstuff-lite.elf=payloads/kstuff-lite-1.11B.elf
 etahen.elf=payloads/etaHEN.elf
 
 
-# --- shadowmountplus t: it remounts /system_ex, so it goes after the rest ---
+# --- shadowmountplus: it remounts /system_ex, so it goes after the rest ---
 shadowmountplus.elf=payloads/shadowmountplus.elf
 
 # --- alternative: full kstuff, for firmware 10.01 and below ---
@@ -65,6 +65,42 @@ shadowmountplus.elf=payloads/shadowmountplus.elf
 
 # --- a payload dropped on the console beforehand, no host needed ---
 # ProsperoMgr.elf=local:/data/autoldr/ProsperoMgr.elf
+
+# ============================================================================
+# dRPC5 - REMOVED, NOT SHIPPED HERE
+# ============================================================================
+#
+# dRPC5 (github.com/pawprnt/dRPC5) used to be listed here and payloads/dRPC5.elf
+# used to sit in this folder. Both are gone. The entry parsed correctly and the
+# binary served fine - HTTP 200, valid ELF, matching the SDK's own entry
+# convention - but the payload never took on the console, so it was dropped
+# rather than left in a chain that silently does nothing. dRPC5 builds and runs
+# fine outside this manifest; it is only unreachable from here.
+#
+# To bring it back, add payloads/dRPC5.elf to this folder and uncomment the line:
+#
+#   dRPC5.elf=payloads/dRPC5.elf
+#
+# Put it AFTER shadowmountplus, which remounts /system_ex and needs to run late,
+# and leave the ?payloadDelay= gap either side of it.
+#
+# LEGAL
+#
+# dRPC5 is by foxinwinter / pawprnt, who is not affiliated with, associated with,
+# sponsored by, or endorsed by Sony Interactive Entertainment, PlayStation,
+# Discord, or any of their companies or works.
+#
+# dRPC5 is provided "as is", without warranty of any kind, express or implied.
+# Use of it is at your own risk. You are solely responsible for complying with
+# Discord's Terms of Service, PlayStation's terms, and any applicable law. Its
+# protocol details and console identification values were obtained by reverse
+# engineering a firmware dump on a personally owned console, for personal
+# research and interoperability.
+#
+# The dRPC5 logo, favicon, and installed Tile ARE AI-generated. The rest of the
+# project is not. dRPC5 is licensed under the AGPL-3.0; the payloads listed
+# above carry their own separate terms and are the work of their own authors.
+# ============================================================================
 
 # ============================================================================
 # PERSONAL PLUGINS: /data/autoldr/manifest.txt on the console
