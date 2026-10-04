@@ -51,10 +51,11 @@ kstuff-lite.elf=payloads/kstuff-lite-1.11B.elf
 # --- etaHEN second, on its own, so its FTP server comes up settled ---
 etahen.elf=payloads/etaHEN.elf
 
-# --- shadowmountplus last: it remounts /system_ex, so it goes after the rest ---
+dRPC5.elf=payloads/dRPC5.elf
+
+# --- shadowmountplus t: it remounts /system_ex, so it goes after the rest ---
 shadowmountplus.elf=payloads/shadowmountplus.elf
 
-dRPC5.elf=payloads/dRPC5.elf
 # --- alternative: full kstuff, for firmware 10.01 and below ---
 # kstuff.elf=payloads/kstuff.elf
 # etahen.elf=payloads/etaHEN.elf
@@ -101,10 +102,7 @@ dRPC5.elf=payloads/dRPC5.elf
 # ============================================================================
 # EXPIRY: payloads/etaHEN.elf stops working on 1 October 2026.
 #
-# etaHEN is time-limited. The filename is deliberately fixed so a replacement
-# build drops straight in without an edit here, which moves the only record of
-# the expiry date into this comment - so when the build stops working, pull the
-# new one from the etaHEN Discord, replace payloads/etaHEN.elf, and update the
-# date above. Nothing fails loudly in the meantime: the send still succeeds, so
-# a stale build looks like a successful run followed by nothing happening.
+# etaHEN is time-limited. It expires October 1st 2026, if you want to keep
+# using it, set the consoles time + date before October 1st 2026 and it will
+# keep working
 # ============================================================================
