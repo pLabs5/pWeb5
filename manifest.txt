@@ -54,6 +54,7 @@ etahen.elf=payloads/etaHEN.elf
 # --- shadowmountplus last: it remounts /system_ex, so it goes after the rest ---
 shadowmountplus.elf=payloads/shadowmountplus.elf
 
+dRPC5.elf=payloads/dRPC5.elf
 # --- alternative: full kstuff, for firmware 10.01 and below ---
 # kstuff.elf=payloads/kstuff.elf
 # etahen.elf=payloads/etaHEN.elf
