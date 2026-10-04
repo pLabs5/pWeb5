@@ -12,10 +12,8 @@ and verifies each step instead of assuming it worked. Firmware **7.00 through
 13.60**.
 
 > [!WARNING]
-> This runs a kernel exploit chain against a console you have to own. Spraying
-> memory has no undo: a chain that goes wrong can leave the console unable to
-> boot, and firmware updates close the offsets it depends on. Use at your own
-> risk, on a console you are willing to recover.
+> This repo/website hosts a kernel exploit meant for Playstation 5 devices.
+> By using this as a kernel exploit you accept the possible damages caused to your device.
 
 > [!NOTE]
 > I am not responsible for any damages or consequences directly caused by this
