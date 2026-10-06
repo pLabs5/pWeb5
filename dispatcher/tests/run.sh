@@ -102,6 +102,33 @@ EOF
 NO_FETCH=1 run comment >/dev/null
 check "comment stripped" "[2/2] thing.elf <- http://localtest/payloads/other.elf" "$TMP/out.comment"
 
+echo "wait= key overrides the gap between payloads"
+cat >"$ROOT/manifest.txt" <<'EOF'
+wait=9
+one.elf
+two.elf
+EOF
+NO_FETCH=1 run waitkey >/dev/null
+check "wait directive parsed"   "manifest: wait between payloads set to 9 seconds" "$TMP/out.waitkey"
+check "entries still load"      "[2/3] one.elf <- http://localtest/payloads/one.elf" "$TMP/out.waitkey"
+refute "wait is not an entry"   "wait <-" "$TMP/out.waitkey"
+refute "wait not a payload"     "payloads/wait.elf" "$TMP/out.waitkey"
+
+echo "a wait= line with a non-number stays an entry"
+cat >"$ROOT/manifest.txt" <<'EOF'
+wait=payloads/thing.elf
+EOF
+NO_FETCH=1 run waitentry >/dev/null
+check "non-numeric value falls through" "[2/2] wait <- http://localtest/payloads/thing.elf" "$TMP/out.waitentry"
+
+echo "wait= of zero means no pause at all"
+cat >"$ROOT/manifest.txt" <<'EOF'
+wait=0
+one.elf
+EOF
+NO_FETCH=1 run waitzero >/dev/null
+check "zero accepted" "manifest: wait between payloads set to 0 seconds" "$TMP/out.waitzero"
+
 echo "an explicit payloads/ prefix does not stack"
 cat >"$ROOT/manifest.txt" <<'EOF'
 etahen.elf=payloads/etaHEN.elf

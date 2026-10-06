@@ -1,301 +1,152 @@
 # pWeb5
 
-A PS5 jailbreak autoloader that runs in the console's own browser. It executes
-the exploit chain in the page, shows you what it is doing while it does it, and
-pushes the homebrew payloads to the console once the chain is up.
+a ps5 jailbreak autoloader using a webpage
+> Live at **https://pweb5.pages.dev**
+> firmwares 7.00 through 13.60
 
-Live at **https://pweb5.pages.dev**
-
-The exploit chain is [KAR0218's rework of Relapse](https://github.com/KAR0218/KAR0218.github.io/tree/main/ps5/relapse),
-which itself is built on [Relapse](https://github.com/ntfargo/Relapse-Exploit)
-and verifies each step instead of assuming it worked. Firmware **7.00 through
-13.60**.
+The exploit chain is [KAR0218's rework of Relapse](https://github.com/KAR0218/KAR0218.github.io/tree/main/ps5/relapse), which itself is built on [Relapse](https://github.com/ntfargo/Relapse-Exploit) and verifies each step instead of assuming it worked. Firmware ***7.00 through 13.60***.
 
 > [!WARNING]
-> This repo/website hosts a kernel exploit meant for Playstation 5 devices.
-> By using this as a kernel exploit you accept the possible damages caused to your device.
+> This repo/website hosts a kernel exploit meant for Playstation 5 devices. By using this as a kernel exploit you accept the possible damages caused to your device.
 
 > [!NOTE]
-> I am not responsible for any damages or consequences directly caused by this
-> software, including but not limited to console system software corruption, data
-> loss, or anything else arising from its use.
+> I am not responsible for any damages or consequences directly caused   by this software, including but not limited to console system software corruption, data loss, or anything else arising from its use.
 
 ## running it
 
-Open **https://pweb5.pages.dev** in the console's browser and press
-**JAILBREAK**.
+in order to run it initally, you need your PS5's IP address, then:
 
-Nothing happens on load — the button is there on purpose. The chain sprays
-memory the moment it starts and there is no undo, so it waits for a deliberate
-click.
+```sh
+wrkdir=$(mktemp -d)
+git clone https://github.com/pLabs5/pWeb5 "$wrkdir"
+cd "$wrkdir/pWeb5"
+make fakedns PS5iP=<playstationsIP>
+```
 
-You need the console on the internet and a browser pointed at that address.
-Nothing is downloaded or unpacked on a PC first; the page fetches the payloads
-and streams them to the console itself.
+`make fakedns` compiles `tools/fakedns/fakedns.c` and launches it with `sudo`, because binding to UDP port 53 needs root.
 
-The **JAILBREAK** button only appears to something the site recognises as a
-PlayStation 5. Opened on a desktop it just says so, because there is no WebKit
-there to exploit and no console to send anything to.
+you should see something like this when running:
+```
+[fakedns] local IP: <computersIP>                    <- the IP you'll set on the PS5
+[fakedns] PS5 IP:   <playstationsIP>
+[fakedns] manuals.playstation.com -> pweb5.pages.dev (172.66.44.146)
+[fakedns] firewall: udp/53 permitted                 <- applied automatically, since we're root
+[fakedns] blocked substrings: playstation / sonyentertainmentnetwork / scea
+[fakedns] will relay everything else to 8.8.8.8:53
+```
 
-## what happens
+what it does with DNS requests from the PS5:
 
-Five stages, in order:
+- any name containing `manuals.playstation` is sent to **pweb5.pages.dev**, so the Users Guide opens the exploit
+- names mentioning `playstation`, `sonyentertainmentnetwork` or `scea` get **NXDOMAIN**, cutting the console off from PlayStation/Sony services so it can't phone home mid-exploit
+<I STOPPED HERE, NEED TO FINISH EDITING AFTER DONE>
+- everything else is relayed untouched to `8.8.8.8`, so normal internet still works.
 
-| # | stage | what it covers |
-|---|-------|----------------|
-| 1 | webkit | the ARW primitive |
-| 2 | rop worker | worker stack discovery and the ROP chain |
-| 3 | kernel | kernel rw, process, pipes, privileges |
-| 4 | elfldr | kexp loads, elfldr listens on :9021 |
-| 5 | autoload | `dispatcher.elf` is sent to elfldr, and it sends the plugins |
+then take your PS5 online and point it at this computer as its DNS resolver, under: `settings -> network -> settings -> set up internet connection`, click the options button, select `advanced options`, and set `DNS server` to the **local IP** fakedns printed.
 
-Stage 5 is one payload, not three. The page's progress view shows the
-dispatcher; what the dispatcher then does is on the console, in
-`/data/autodr/dispatcher.log`.
+after confirming the options you will probably get a `could not connect to the internet` error, this is ***GOOD.*** after the error message appears click `ok` and navigate to the PS5 Users Guide.
 
-Each one ticks off as it completes and the log below shows the chain's own
-output. At the end you get a verdict — **JAILBROKEN** or **FAILED** — with a
-summary: firmware, viewport, which plugins were sent, how many bytes moved, and
-how long it took. **view run** puts the full log back.
-
-If a stage stalls, the page gives up on it rather than sitting there forever, and
-says which phase it stalled in.
-
-Stage 4 is a hard gate. elfldr has to actually confirm it is listening on 9021
-before any plugin is sent, so a run that got root but no elfldr reports that
-plainly instead of streaming payloads at a closed port and calling it a plugin
-failure.
-
-### the run checks its own work
-
-This is the part that differs from the original chain. It does not assume a step
-worked:
-
-- The WebKit primitive retries its own placement, up to 24 attempts, and says
-  which attempt it is on.
-- The fake memory cell is promoted into a real read/write pair, and **that
-  promotion is verified**. If it fails, its rollback is verified too — and if
-  the rollback cannot be confirmed, `window.p` is withdrawn rather than left
-  published mis-aimed.
-- The kernel stage confirms its own output: arbitrary kernel read is read back,
-  your process is found in `allproc`, and root and out-of-sandbox are checked by
-  reading your uid and sandbox flag *after* writing them, not assumed from the
-  write succeeding.
-- The master/victim pipe pair is created and both ends are verified as ours.
-- The walk counter is checked to make sure it does not move on its own, and a
-  walk that does is stopped instead of being trusted.
-- Failed steps are retried rather than carried forward.
-
-A step that cannot be made to work reports `NO-GO` or `STOP` with the reason and
-stops the run. You get a failed run with an explanation instead of a run that
-reports success on a half-built primitive.
+the page should load, wait 10 seconds and the exploit will start and payloads will be sent. once jailbroken set the DNS server of the PS5 back to your router/automatic so normal online features return. 
 
 ## what you get
 
-The page's last job is handing elfldr one payload, `dispatcher.elf`. That
-payload reads `manifest.txt`, works out the kstuff build for the firmware, and
-sends everything else to elfldr itself, over the console's own sockets. The
-page can then be closed without stranding the chain.
-
-The plugin list is not hardcoded in the dispatcher either — it comes from
-`manifest.txt`, which also decides the order:
-
+the main part of the page is sending `dispatcher.elf`, that payload reads either the local manifest at `/data/autoldr/manifest.txt` or the remote `manifest.txt`. after reading / parsing the manifest it fetches the payload from the correct source, either the `payloads/` folder in the repo, the local `/data/autoldr/plugins/` folder on the console, or from a website. 
+the default manifest,txt loads plugins in the following order:
 | plugin | what it is |
 |--------|------------|
-| kstuff-lite | the kernel payload everything else needs |
-| etaHEN | the homebrew installer environment |
-| shadowmountplus | remounts `/system_ex`, so more can be written to it |
+|kstuff/kstuff-lite| the kernel payload most things need 
+|etaHEN | the homebrew enabler
+|shadowmountplus | remounts `/system_ex` and manages game dumps
 
-Which kstuff build loads is your firmware's decision, not yours: full kstuff up
-to and including 10.01, kstuff-lite above that.
-
-There is a **5 second gap between plugins**, and it matters. etaHEN starts its
-FTP server the moment it lands and shadowmountplus remounts `/system_ex`;
-sending them close together panics the console. Each one is fetched, streamed to
-elfldr, and waited out before the next starts.
-
-A payload that will not send **stops the chain** instead of being skipped.
-Skipping would leave everything after it depending on something that never
-loaded, which is worse than a run that fails and names the entry.
-
-The dispatcher writes what it is doing to `/data/autodr/dispatcher.log` as well
-as stdout. Set `DISPATCHER_DRYRUN=1` in the console environment to make it print
-the whole plan and send nothing.
+the version of kstuff that gets used is dependant on your FW, not up to you, ill probably change that at some point
+there is a roughly 5 second delay between each plugin (a `wait=N` key in the manifest sets its own pause; `wait=0` makes it instant), this is to prevent plugins from interferring with eachother.
+`dispatcher.elf` writes everything it does to `/data/autoldr/dispatcher.log`
 
 ### etaHEN has stopped working
 
-`payloads/etaHEN.elf` is time-limited and the bundled build **expired on
-1 October 2026**.
-
-This does not fail loudly. The send still succeeds, so it looks like a
-successful run followed by nothing happening. If etaHEN is what you came for,
-you need a newer build dropped into the plugin list — see below.
+the current beta of etaHEN, located in the repo at `payloads/etaHEN.elf` has 'expired' if your consoles date/ time is up-to-date, it won't load properly, but you can get around it expiring by setting a time/date before **october 1st, 2026** 
+i am currently waiting for the next beta to drop in the `PKG-Zone` discord, once it does i'll update it, for now, just set your date+time back a month or so
 
 ## using your own plugins
 
-You do not need to edit anything on the site. Put a manifest on the console at:
-
+pWeb5 supports using your own plugins, to do so, create the manifest at:
 ```
 /data/autoldr/manifest.txt
 ```
+creating that file causes `dispatcher.elf` to read *your* manifest instead of the sites `manifest.txt`
 
-and it **replaces** the site's list entirely — your plugins, your order:
-
+format / options for manifest.txt (without the leading `<lineNumber>:`)
 ```
-# /data/autoldr/manifest.txt
-ProsperoMgr.elf=local:/data/autoldr/plugins/ProsperoMgr.elf
-etahen.elf=payloads/etaHEN.elf
+1: # /data/autoldr/manifest.txt < this is a comment
+2: ProsperoMgr.elf=local:/data/autoldr/plugins/ProsperoMgr.elf
+3: etahen.elf=payloads/etaHEN.elf 
 ```
+- line 1: just a comment, isn't read by the dispatcher
+- line 2: loads ProsperoMgr.elf from `/data/autoldr/plugins/` on the console
+- line 3: loads etaHEN.elf from: `pweb5.pages.dev/payloads/etaHEN.elf`  
 
-Nothing from the site list loads once yours exists, so name anything you still
-want. Format is one `name=target` per line; `#` starts a comment and blank lines
-are skipped. A bare `name` with no `=` means `payloads/<name>`.
-
-A target is one of three things:
-
-| target | where it comes from |
-|--------|---------------------|
-| `payloads/<file>` | a file on this site |
-| `//host/path` or `https://host/path` | anywhere else, if that host allows it |
-| `local:/data/autoldr/<file>` | a file already on the console |
-
-A remote host has to send `Access-Control-Allow-Origin` or the fetch fails and
-the run reports which URL would not load. That is why GitHub release assets do
-not work as a target but `raw.githubusercontent.com` does. Any other scheme is
-rejected and fails the run, rather than being fetched as a path on this site.
-
-`kstuff` is the exception — it always loads first, because it is what makes the
-rest work, and you do not have to name it. Name `kstuff.elf` or
-`kstuff-lite.elf` yourself and that one is used instead of the firmware pick, so
-you can pin a build.
-
-**Be honest about the risk here:** only `/data/autoldr/` is reachable with a
-`local:` target, `..` is rejected, and the file has to be on the console before
-the run starts. Neither the dispatcher itself nor a console-local manifest has
-been run on real hardware yet. The parsing, the kstuff pick and the `local:`
-checks are covered by host tests in `dispatcher/tests/`; the send path is not,
-because it needs a console. Treat your own manifest as untested.
+`kstuff` is the **ONLY** exception — it always loads first, because it is what makes the rest work, and you do not have to name it. Name `kstuff.elf` or `kstuff-lite.elf` yourself and that one is used instead of the firmware pick, so you can pin a build.
 
 ## making the Store tile your launcher
 
-After a successful run the verdict screen offers **APPLY TO PS STORE**. That
-sends `JailbreakStore.elf` to elfldr, which renames the PS Store tile
-(`NPXS40047`) to *Jailbreak Store* and repoints it at this site — so from then
-on you tap the tile instead of finding a URL.
+after a successful run, the verdict screen shows the **APPLY TO PS STORE** button. that sends `payloads/JailbreakStore.elf` to elfldr, which renames the PS Store tile (`NPXS40047`) to *Jailbreak Store*, changes the logo to the old playstation logo, and repoints it at `https://pweb5.pages.dev` — so from then on you tap the store instead of using fakedns every time.
 
-It changes nothing about the app itself and deletes no rows, so you can undo it
-by removing the `DEEPLINK_URI` entry from the tile's metadata and putting the
-real store back. **A PS5 reboot is needed** either way for the tile to change.
+> [!NOTE]
+> for the change(s) to apply to the PS store, you need to reboot
 
-If the button reports a failure, the ELF can be sent from a PC instead:
-
-```bash
-python3 tools/send_elf.py payloads/JailbreakStore.elf <ps5-ip> 9021
-```
-
-## firmware
-
-The version is read from the browser's user agent. If yours does not parse —
-the format varies by region and firmware — set it yourself:
-
-```
-https://pweb5.pages.dev/?fw=13.20
-```
-
-Offsets only exist for versions the upstream chain shipped, so an unsupported
-firmware fails with a message naming the version it wanted rather than just
-refusing. Two-digit minors are normalised, so `13.2` and `13.20` are the same.
 
 ## query flags
 
 | flag | effect |
 |------|--------|
-| `?fw=13.20` | set the firmware version by hand |
-| `?auto=1` | skip the start button |
+| `?fw=13.20` | set the firmware version by hand | 
+| `?auto=1` | skip the start button | 
 | `?measure=1` | show the WebView viewport report |
 | `?webkitTimeout=N` | give up on the webkit stage after N seconds (default 300) |
 | `?kernelTimeout=N` | give up on the kernel stage after N seconds (default 600) |
 | `?payloadTimeout=N` | give up on the plugin stage after N seconds (default 120) |
 
-Lowering a timeout does not make the chain faster, it only makes the page stop
-waiting. The defaults are generous on purpose — the kernel stage can legitimately
-sit on `checking aio groups` for minutes on a good run.
+<!-- 
+remove query flags and instead make them config options in:
+/data/autoldr/config.ini
+-->
 
 ## if it goes wrong
 
-**The webkit stage hangs.** Placement retries up to 24 times, but the cap is
-per attempt, so a run where every attempt times out slowly would still leave the
-run pending. The page bounds the whole stage and fails the run instead of hanging
-silently. The log tells you which attempt it was on.
+**The webkit stage hangs:** 
+- *Controller stops working/ nothing happens when using it:*
+	- it's very possible the webkit primitive stage hung, in this case, simply hold the power button for 10 seconds to force a poweroff
+- *PS5 still responds but webpage no-longer loads after a `this page is not responding. stop loading it?` popup appears*
+	- the webkit primitive stage hung, simply hold the power button for 10 seconds to force a poweroff
 
-**The kernel stage hangs.** It walks every armed AIO group and clears it, one
-kernel round trip at a time. On a bad run this used to sit forever and leave the
-console unable to finish a reboot. It is bounded now, and the failure names the
-phase it got stuck in.
+**The kernel stage hangs:** 
 
-**`offsets/<version>.js never loaded`.** That firmware has no exploit offsets.
-Nothing about this site will fix it.
+- *`offsets/<fwVersion>,js never loaded`*
+	- that FW version very likely doesn't have support, or the PS5 had trouble loading the `offsets/<version>.js` file
 
-**A plugin fails to load.** The run stops and names the file. Whatever was sent
-before it stays sent — plugins are delivered one at a time, in order.
-
-**It only works on a subset of firmware.** Offsets are per-version and cover
-7.00–13.60. There is no fallback for a version outside that.
+**A plugin fails to load:** 
+- *`local plugin failed`*
+	- a few things could have gone wrong, you may have defined the wrong path to a local plugin, or the local plugin wasn't for the PS5
+- *`remote plugin failed`*
+	- its most likely that it failed to get the plugin from the internet for whatever reason, check your router settings
 
 ## licence
 
 **AGPLv3.** Full text in [`LICENSE`](LICENSE).
 
-  pWeb5 is free software: you can use, study, share and modify it. If you
-  redistribute it, or ship a modified version, you have to pass the same licence on
-  and make your source available.
+  pWeb5 is free software: you can use, study, share and modify it. if you
+  redistribute it, or ship a modified version, you have to pass the same licence on and make your source available.
 
-  The Affero part matters here specifically because this site is served over a
-  network. If you run a modified copy and let other people reach it — a fork on
-  Pages, a mirror, a self-hosted build — section 13 requires you to offer those
-  users the corresponding source. Keep the source link visible and don't strip it
-  from a fork's front page.
+the exploit chain that is used is KAR0218's rework of relapse, adapted to work here. the included plugin binaries under `payloads/` are third-party builds and keep their own terms. 
 
-The exploit chain under `src/` is KAR0218's rework of Relapse, adapted here (see
-the top of [`src/boot.js`](src/boot.js) for exactly what changed). The bundled
-plugin binaries under `payloads/` are third-party builds and keep their own
-terms — they are redistributed, not relicensed.
-
-## building the dispatcher
-
-`payloads/dispatcher.elf` is built from [`dispatcher/main.c`](dispatcher/main.c).
-It needs the payload SDK, which is not vendored here:
-
-```bash
-PS5_PAYLOAD_SDK=/path/to/ps5-payload-sdk make -C dispatcher
-```
-
-`tools/build.sh` does that for you when `PS5_PAYLOAD_SDK` is set, and otherwise
-builds the site with whatever `payloads/dispatcher.elf` is already there — so
-the site still assembles on a machine with no SDK.
-
-`dispatcher/llvm-shim.sh` exists because `prospero-clang` finds its real
-compiler and linker through `llvm-config --bindir`, which on Nix and some
-distros points at a directory holding neither. The shim assembles a bindir that
-has both. It runs automatically and prints nothing if the toolchain is already
-fine; set `LLVM_CONFIG` yourself to override it.
-
-The parser, the kstuff firmware pick and the `local:` confinement checks are
-tested on the host, with no console and no SDK:
-
-```bash
-dispatcher/tests/run.sh
-```
 
 ## legal
 
-I, foxinwinter/pLabs5, as well as its contributers, are not affiliated with, associated with, sponsored by,
-endorsed by, otherwise established with Sony Interactive Entertainment, Playstation, or any of their
+I, foxinwinter/pLabs5, as well as its contributers, are not affiliated with, associated with, sponsored by, endorsed by or otherwise established with Sony Interactive Entertainment, Playstation, or any of their
 other companies or works unless explictly stated otherwise.
-Just because a explict mention above isn't present does **NOT** mean otherwise.
+*Just because a explict mention above isn't present does **NOT** mean otherwise.*
 
 All software is provided "as is", without warranty of **ANY** kind, express
 or implied. Use all software at your own risk.
 
-You are solely responsible for complying with terms of service of all programs, as
-well as any applicable law. 
+You are solely responsible for complying with terms of service of all programs, as well as any applicable law. 

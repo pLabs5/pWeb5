@@ -22,6 +22,12 @@
 # treated as payloads/<name>; an explicit payloads/ prefix on a target means the
 # same thing, so "etahen.elf" and "etahen.elf=payloads/etaHEN.elf" are equal.
 #
+# One key is reserved: a line of just "wait=N" (or its alias "delay=N") sets
+# the pause between payloads to N seconds, overriding the built-in 5s default.
+# The value must be a clean number; if it is anything else the line is treated
+# as an ordinary entry, so a payload that happens to be called "wait" still
+# works. wait=0 disables the pause entirely.
+#
 # A target is one of three things:
 #
 #   payloads/<file>        a file on this site
@@ -47,8 +53,9 @@
 #
 # etaHEN starts its FTP server the moment it lands, and shadowmountplus remounts
 # /system_ex. Sending those two close together panicked the console, so the
-# dispatcher waits 5 seconds between entries. If you add payloads, keep the ones
-# that touch mounts or network services apart.
+# dispatcher waits 5 seconds between entries (a "wait=N" line above changes
+# that). If you add payloads, keep the ones that touch mounts or network
+# services apart.
 #
 # The dispatcher also stops rather than skipping a payload that will not send.
 # A hole in the chain leaves later payloads depending on one that never loaded,
@@ -91,7 +98,7 @@ shadowmountplus.elf=payloads/shadowmountplus.elf
 #   dRPC5.elf=payloads/dRPC5.elf
 #
 # Put it AFTER shadowmountplus, which remounts /system_ex and needs to run late.
-# The dispatcher already waits 5s between entries.
+# The dispatcher already waits 5s between entries (customise with a wait= key).
 #
 # LEGAL
 #
@@ -140,7 +147,8 @@ shadowmountplus.elf=payloads/shadowmountplus.elf
 # Since your list replaces this one, the ordering note above is yours to get
 # right: shadowmountplus remounts /system_ex, and the console panics when the
 # things that touch mounts and network servers land close together. Keep it
-# last, and remember the dispatcher waits 5s between every entry.
+# last, and remember the dispatcher waits 5s between every entry (or set your
+# own pause with a "wait=N" key).
 # ============================================================================
 
 # ============================================================================

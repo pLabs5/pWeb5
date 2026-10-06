@@ -6,7 +6,7 @@
  * each payload into elfldr - happens here, so a closed or backgrounded
  * WebView cannot strand the rest of the chain.
  *
- * Build:  bash build.sh     (see Makefile)
+ * Build:  make build     (see the repo Makefile)
  * Test:   DISPATCHER_DRYRUN=1 on the console logs the plan without sending.
  */
 
@@ -83,7 +83,10 @@ int sceKernelGetProsperoSystemSwVersion(void *buf);
 #define MAX_MANIFEST 0x10000
 #define HTTP_POOL 512 * 1024
 #define HTTP_BUFSZ 64 * 1024
+/* Default gap between payloads; a manifest `wait=` key overrides it. */
 #define GAP_SECONDS 5
+/* Sanity ceiling for a wait= key, so a typo cannot park the chain for a day. */
+#define GAP_MAX_SECONDS 3600
 #define HTTP_ATTEMPTS 3
 /* elfldr accepts one connection at a time and is still busy unmapping the
  * dispatcher itself when main() starts, so the first connect can lose the
@@ -105,6 +108,7 @@ static struct entry g_entries[MAX_ENTRIES];
 static int g_count;
 static int g_dryrun;
 static int g_planonly;
+static int g_gap = GAP_SECONDS;
 
 #ifndef DISPATCHER_USE_CURL
 static int g_net_mem = -1;
@@ -500,6 +504,26 @@ add_entry(const char *name, const char *target)
   g_count++;
 }
 
+/* A directive line is name=value, the name being a reserved word and the
+ * value a clean number. wait=5 (delay=5 is the same thing) sets the pause
+ * between payloads to 5 seconds; anything else is left to add_entry below, so
+ * an entry that happens to be called "wait" still works. */
+static int
+manifest_directive(const char *key, const char *value)
+{
+  char *end;
+  long v;
+
+  if (strcasecmp(key, "wait") && strcasecmp(key, "delay")) return 0;
+  errno = 0;
+  v = strtol(value, &end, 10);
+  if (errno || end == value || *end != '\0' || v < 0 || v > GAP_MAX_SECONDS)
+    return 0;
+  g_gap = (int)v;
+  logmsg("manifest: wait between payloads set to %d seconds", g_gap);
+  return 1;
+}
+
 static void
 parse_manifest(char *text)
 {
@@ -525,7 +549,7 @@ parse_manifest(char *text)
     if (*line) {
       if ((eq = strchr(line, '='))) {
         *eq = '\0';
-        add_entry(line, eq + 1);
+        if (!manifest_directive(line, eq + 1)) add_entry(line, eq + 1);
       } else {
         add_entry(line, line);
       }
@@ -784,8 +808,9 @@ main(void)
 
     /* Gap between payloads. etaHEN starts its FTP server the moment it lands
      * and shadowmountplus remounts /system_ex; sending them close together
-     * panics the console. */
-    if (i < g_count - 1) sleep(GAP_SECONDS);
+     * panics the console. The default is 5s; a manifest wait= key overrides
+     * it. */
+    if (i < g_count - 1) sleep(g_gap);
   }
 
   http_fini();
