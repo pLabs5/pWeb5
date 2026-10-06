@@ -70,7 +70,7 @@ shadowmountplus.elf=payloads/shadowmountplus.elf
 # dRPC5 - REMOVED, NOT SHIPPED HERE
 # ============================================================================
 #
-# dRPC5 (github.com/pawprnt/dRPC5) used to be listed here and payloads/dRPC5.elf
+# dRPC5 (github.com/pLabs5/dRPC5) used to be listed here and payloads/dRPC5.elf
 # used to sit in this folder. Both are gone. The entry parsed correctly and the
 # binary served fine - HTTP 200, valid ELF, matching the SDK's own entry
 # convention - but the payload never took on the console, so it was dropped
