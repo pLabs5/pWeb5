@@ -24,6 +24,13 @@ CFLAGS := -Wall -Wextra -Werror -g -O2 \
           -DLOCAL_ROOT='"$(LOCAL_ROOT)"' \
           -lkernel -lSceNet -lSceSsl -lSceHttp2
 
+# The Pages build has no SDK, so payloads/dispatcher.elf has to be committed
+# rather than produced at deploy time. That only stays honest if the build is
+# reproducible, and lld's default GNU build-id is a fresh random UUID per link -
+# the only reason two builds of identical source differed. Dropping it makes
+# "rebuild and diff the committed binary" a real check.
+LDFLAGS := -Wl,--build-id=none
+
 # prospero-clang resolves clang and lld through llvm-config's --bindir. Some
 # layouts ship those in separate packages, so that bindir may hold neither.
 # llvm-shim.sh finds a working one (and assembles it if need be).
@@ -33,7 +40,7 @@ export LLVM_CONFIG
 all: $(ELF)
 
 $(ELF): main.c
-	$(CC) $(CFLAGS) -o $@ $<
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $<
 
 clean:
 	rm -f $(ELF)
