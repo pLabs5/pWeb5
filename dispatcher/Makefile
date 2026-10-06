@@ -22,7 +22,8 @@ ELF := dispatcher.elf
 CFLAGS := -Wall -Wextra -Werror -g -O2 \
           -DCLOUD_BASE='"$(CLOUD_BASE)"' \
           -DLOCAL_ROOT='"$(LOCAL_ROOT)"' \
-          -lkernel -lSceNet -lSceSsl -lSceHttp2
+          -DDISPATCHER_USE_CURL \
+          -Icore -Ithird_party/curl/include
 
 # The Pages build has no SDK, so payloads/dispatcher.elf has to be committed
 # rather than produced at deploy time. That only stays honest if the build is
@@ -30,6 +31,13 @@ CFLAGS := -Wall -Wextra -Werror -g -O2 \
 # the only reason two builds of identical source differed. Dropping it makes
 # "rebuild and diff the committed binary" a real check.
 LDFLAGS := -Wl,--build-id=none
+CURL_LIBS := third_party/curl/lib/libcurl.a \
+             third_party/curl/lib/libmbedtls.a \
+             third_party/curl/lib/libmbedx509.a \
+             third_party/curl/lib/libmbedcrypto.a
+PAYLOAD_LIBS := -lkernel -lpthread
+
+SRCS := main.c core/dns.c core/stub_cfg.c core/bundled_ca.c
 
 # prospero-clang resolves clang and lld through llvm-config's --bindir. Some
 # layouts ship those in separate packages, so that bindir may hold neither.
@@ -39,8 +47,12 @@ export LLVM_CONFIG
 
 all: $(ELF)
 
-$(ELF): main.c
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $<
+core/bundled_ca.c: third_party/cacert.pem tools/embed.c
+	$(HOSTCC) $(HOSTCFLAGS) -o build/embed tools/embed.c
+	build/embed --out $@ --dec kCaPem=$<:kCaPemSize
+
+$(ELF): $(SRCS) $(CURL_LIBS)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SRCS) $(CURL_LIBS) $(PAYLOAD_LIBS)
 
 clean:
 	rm -f $(ELF)

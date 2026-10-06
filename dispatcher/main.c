@@ -28,6 +28,22 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 
+#ifdef DISPATCHER_USE_CURL
+#include <curl/curl.h>
+#include "core/dns.h"
+
+/* dns.c shares the resolver with dRPC5, which wants its server list out of
+ * a config file. There is no config file here, so the link needs this
+ * name; it is answered in core/stub_cfg.c, where it says "unset". */
+int cfg_get(const char *key, char *out, unsigned long cap);
+
+/* The CA bundle is embedded into the binary, but CURLOPT_CAINFO wants a
+ * path. Dropping it onto the autoload directory keeps curl from
+ * depending on dRPC5's layout. */
+#define CA_FILE LOCAL_ROOT "/cacert.pem"
+
+uint8_t *curl_http_get_once(const char *url, size_t *out_len);
+#else
 /* libSceNet / libSceSsl / libSceHttp2. The SDK ships no headers for these,
  * so the prototypes are declared here the way the SDK's own samples do. */
 int sceNetInit(void);
@@ -44,6 +60,7 @@ int sceHttp2DeleteRequest(int);
 int sceHttp2SendRequest(int, const void *, size_t);
 int sceHttp2GetStatusCode(int, int *);
 int sceHttp2ReadData(int, void *, size_t);
+#endif
 
 /* PS5 kernel firmware-version probe. Argument is a 0x18-byte struct:
  * uint32_t size at offset 0, BCD-packed version uint32 at offset 0x14
@@ -89,10 +106,14 @@ static int g_count;
 static int g_dryrun;
 static int g_planonly;
 
+#ifndef DISPATCHER_USE_CURL
 static int g_net_mem = -1;
 static int g_ssl_ctx = -1;
 static int g_http_ctx = -1;
 static int g_tmpl = -1;
+#else
+static int g_http_ctx = -1; /* 1 once curl has been initialised */
+#endif
 
 /* ------------------------------------------------------------------ */
 
@@ -152,7 +173,23 @@ static void
 http_init(void)
 {
   if (g_http_ctx != -1) return;
+#ifdef DISPATCHER_USE_CURL
+  extern const unsigned char kCaPem[];
+  extern const unsigned int kCaPemSize;
+  FILE *ca;
 
+  if (curl_global_init(CURL_GLOBAL_ALL) != CURLE_OK) {
+    logmsg("http: curl_global_init failed");
+    return;
+  }
+  g_http_ctx = 1;
+  if ((ca = fopen(CA_FILE, "wb"))) {
+    fwrite(kCaPem, 1, kCaPemSize, ca);
+    fclose(ca);
+  } else if (access(CA_FILE, R_OK) != 0) {
+    logmsg("http: cannot write CA bundle to " CA_FILE);
+  }
+#else
   if (sceNetInit()) {
     logmsg("http: sceNetInit failed");
     return;
@@ -180,28 +217,122 @@ http_init(void)
   }
   g_tmpl = sceHttp2CreateTemplate(g_http_ctx, "pweb5-dispatcher/1.0", 3, 1);
   if (g_tmpl < 0) logmsg("http: sceHttp2CreateTemplate failed (%d)", g_tmpl);
+#endif
 }
 
 static void
 http_fini(void)
 {
+#ifdef DISPATCHER_USE_CURL
+  if (g_http_ctx >= 0) curl_global_cleanup();
+  g_http_ctx = -1;
+#else
   if (g_tmpl >= 0) sceHttp2DeleteTemplate(g_tmpl);
   if (g_http_ctx >= 0) sceHttp2Term(g_http_ctx);
   if (g_ssl_ctx >= 0) sceSslTerm(g_ssl_ctx);
   if (g_net_mem >= 0) sceNetPoolDestroy(g_net_mem);
   g_tmpl = g_http_ctx = g_ssl_ctx = g_net_mem = -1;
+#endif
 }
+
+#ifdef DISPATCHER_USE_CURL
+/* libcurl transfers. This is the console-side network implementation of the
+ * old sceHttp2 attempt; the platform's native client could not be relied on to
+ * reach out to the site on the consoles this dispatch was tested on. dRPC5
+ * runs the same libcurl + mbedtls + a tiny hand-rolled IPv4 resolver, so the
+ * same pieces are reused here. The console prefers having an explicit IPv4
+ * address pinned, since its own DNS answer can be whatever the local network
+ * felt like saying. */
+struct curl_grow {
+  uint8_t *buf;
+  size_t cap;
+  size_t len;
+};
+
+static size_t
+curl_write_cb(char *ptr, size_t size, size_t nmemb, void *ud)
+{
+  struct curl_grow *g = ud;
+  size_t want = size * nmemb;
+
+  if (g->len + want >= g->cap) {
+    size_t next = g->cap ? g->cap * 2 : HTTP_BUFSZ * 2;
+    char *tmp;
+    while (next < g->len + want + 1) next *= 2;
+    if (!(tmp = realloc(g->buf, next))) return 0;
+    g->buf = (uint8_t *)tmp;
+    g->cap = next;
+  }
+  memcpy(g->buf + g->len, ptr, want);
+  g->len += want;
+  g->buf[g->len] = '\0';
+  return want;
+}
+
+static uint8_t *
+curl_fetch(const char *url, size_t *out_len)
+{
+  struct curl_grow g = {0};
+  struct curl_slist *pin = NULL;
+  CURL *e;
+  CURLcode rc;
+  long code = 0;
+
+  *out_len = 0;
+  if (!(e = curl_easy_init())) return NULL;
+  pin = dns_pin_url(url);
+
+  curl_easy_setopt(e, CURLOPT_NOSIGNAL, 1L);
+  curl_easy_setopt(e, CURLOPT_FOLLOWLOCATION, 1L);
+  curl_easy_setopt(e, CURLOPT_SSL_VERIFYPEER, 1L);
+  curl_easy_setopt(e, CURLOPT_SSL_VERIFYHOST, 2L);
+  curl_easy_setopt(e, CURLOPT_CAINFO, CA_FILE);
+  curl_easy_setopt(e, CURLOPT_USERAGENT, "pweb5-dispatcher/1.0");
+  curl_easy_setopt(e, CURLOPT_WRITEFUNCTION, curl_write_cb);
+  curl_easy_setopt(e, CURLOPT_WRITEDATA, &g);
+  curl_easy_setopt(e, CURLOPT_URL, url);
+  curl_easy_setopt(e, CURLOPT_CONNECTTIMEOUT_MS, 5000L);
+  curl_easy_setopt(e, CURLOPT_TIMEOUT_MS, 120000L);
+  if (pin) curl_easy_setopt(e, CURLOPT_RESOLVE, pin);
+
+  rc = curl_easy_perform(e);
+  if (pin) curl_slist_free_all(pin);
+  if (rc != CURLE_OK) {
+    logmsg("http: %s", curl_easy_strerror(rc));
+    curl_easy_cleanup(e);
+    free(g.buf);
+    return NULL;
+  }
+  if (curl_easy_getinfo(e, CURLINFO_RESPONSE_CODE, &code) != CURLE_OK || code != 200) {
+    logmsg("http: got status %ld for %s", code, url);
+    curl_easy_cleanup(e);
+    free(g.buf);
+    return NULL;
+  }
+  *out_len = g.len;
+  curl_easy_cleanup(e);
+  return g.buf;
+}
+#endif
 
 /* Fetch a URL into a malloc'd buffer. Caller frees. */
 static uint8_t *
 http_get_once(const char *url, size_t *out_len)
 {
+#ifdef DISPATCHER_USE_CURL
+  *out_len = 0;
+  http_init();
+  if (g_http_ctx < 0) return NULL;
+  return curl_fetch(url, out_len);
+#else
   uint8_t *buf = NULL;
   size_t cap = 0, len = 0;
   int req, status = 0, got;
 
   *out_len = 0;
   http_init();
+  if (g_http_ctx < 0) return NULL;
+
   if (g_tmpl < 0) return NULL;
 
   if ((req = sceHttp2CreateRequestWithURL(g_tmpl, "GET", url, 0)) < 0) {
@@ -245,6 +376,7 @@ http_get_once(const char *url, size_t *out_len)
   buf[len] = '\0';
   *out_len = len;
   return buf;
+#endif
 }
 
 static uint8_t *
@@ -542,6 +674,9 @@ main(void)
   /* DISPATCHER_DRYRUN fetches and validates the whole plan but sends nothing.
    * DISPATCHER_PLAN_ONLY stops earlier still, before any fetch, for when there
    * is no network to fetch from and only the resolved plan matters. */
+  /* The static CA file and the log both live under LOCAL_ROOT. The page
+   * usually creates it, but a standalone load gets no such courtesy. */
+  mkdir(LOCAL_ROOT, 0777); /* EEXIST is fine; nothing to do about anything else */
   g_dryrun = getenv("DISPATCHER_DRYRUN") != NULL;
   g_planonly = getenv("DISPATCHER_PLAN_ONLY") != NULL;
 
