@@ -7,7 +7,7 @@ pushes the homebrew payloads to the console once the chain is up.
 Live at **https://pweb5.pages.dev**
 
 The exploit chain is [KAR0218's rework of Relapse](https://github.com/KAR0218/KAR0218.github.io/tree/main/ps5/relapse),
-which is built on [Relapse](https://github.com/RedPeaSolutions/Relapse-Exploit)
+which itself is buiilt on [Relapse](https://github.com/ntfargo/Relapse-Exploit)
 and verifies each step instead of assuming it worked. Firmware **7.00 through
 13.60**.
 
@@ -289,10 +289,13 @@ dispatcher/tests/run.sh
 
 ## legal
 
-pWeb5 is by foxinwinter / pawprnt, who is not affiliated with, associated with,
-sponsored by, endorsed by, or otherwise established with Sony Interactive
-Entertainment, PlayStation, or any of their other companies or works.
+I, foxinwinter/pLabs5, as well as its contributers, are not affiliated with, associated with, sponsored by,
+endorsed by, otherwise established with Sony Interactive Entertainment, Playstation, or any of their
+other companies or works unless explictly stated otherwise.
+Just because a explict mention above isn't present does **NOT** mean otherwise.
 
-This site is provided "as is", without warranty of any kind, express or implied.
-Use of it is at your own risk. You are solely responsible for complying with
-PlayStation's terms and any applicable law.
+All software is provided "as is", without warranty of **ANY** kind, express
+or implied. Use all software at your own risk.
+
+You are solely responsible for complying with terms of service of all programs, as
+well as any applicable law. 
