@@ -7,7 +7,7 @@ pushes the homebrew payloads to the console once the chain is up.
 Live at **https://pweb5.pages.dev**
 
 The exploit chain is [KAR0218's rework of Relapse](https://github.com/KAR0218/KAR0218.github.io/tree/main/ps5/relapse),
-which itself is buiilt on [Relapse](https://github.com/ntfargo/Relapse-Exploit)
+which itself is built on [Relapse](https://github.com/ntfargo/Relapse-Exploit)
 and verifies each step instead of assuming it worked. Firmware **7.00 through
 13.60**.
 
