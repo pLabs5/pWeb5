@@ -280,7 +280,7 @@ async function sendMapped(name, payload, p, chain) {
  * Watching the dispatcher
  *
  * The dispatcher's own output goes to a file on the console, not back to the
- * page: /data/autodr/dispatcher.log. It has nowhere else to put it, because the
+ * page: /data/autoldr/dispatcher.log. It has nowhere else to put it, because the
  * WebView it was handed to cannot be written to from the other side.
  *
  * That file is also the answer to "what is it actually loading", because it is
@@ -344,7 +344,6 @@ const DISPATCH_ERRORS = [
   /too many entries/,
 ];
 const DISPATCH_WARNINGS = [
-  /retrying$/,
   /not accepting yet/,
   /firmware version unavailable/,
   /not BCD, unrecognised/,
@@ -600,24 +599,121 @@ const DISPATCHER_NAME = "dispatcher.elf";
  * name one - the same rule the dispatcher applies. Best effort: this is for the
  * UI's plugin count, and failing to read the manifest here says nothing about
  * whether the dispatcher can read it on the console. */
-async function countPlannedPayloads() {
+/* Counts the payloads the dispatcher intends to send. The console-local
+ * manifest wins - that is the one the dispatcher reads, so site- and
+ * page-side guesses have to defer to it. Only when it is missing or
+ * unreadable does the count fall back to the site file. */
+function countManifestLines(text) {
+  let named = 0, kstuff = false;
+  for (const raw of String(text).split("\n")) {
+    const line = raw.replace(/#.*$/, "").trim();
+    if (!line) continue;
+    const eq = line.indexOf("=");
+    const name = (eq < 0 ? line : line.slice(0, eq)).trim();
+    if (!name) continue;
+    named++;
+    if (/kstuff/i.test(name)) kstuff = true;
+  }
+  return named + (kstuff ? 0 : 1);
+}
+
+async function countPlannedPayloads(p, chain) {
   try {
-    const response = await fetch("manifest.txt", { cache: "no-store" });
+    const loaded = await readConsoleFileBytes(p, chain, LOCAL_MANIFEST, LOG_MAX_BYTES);
+    if (loaded) return countManifestLines(new TextDecoder().decode(loaded));
+  } catch (e) {
+    /* A CSP/SYSCALL gap on an offsets build means the console filesystem is
+     * opaque - fall through to the site manifest, which is the old
+     * behaviour, rather than refusing to report anything. */
+  }
+  try {
+    const response = await fetchWithTimeout("manifest.txt", 30000);
     if (!response.ok) return 0;
-    let named = 0, kstuff = false;
-    for (const raw of String(await response.text()).split("\n")) {
-      const line = raw.replace(/#.*$/, "").trim();
-      if (!line) continue;
-      const eq = line.indexOf("=");
-      const name = (eq < 0 ? line : line.slice(0, eq)).trim();
-      if (!name) continue;
-      named++;
-      if (/kstuff/i.test(name)) kstuff = true;
-    }
-    return named + (kstuff ? 0 : 1);
+    return countManifestLines(await response.text());
   } catch (e) {
     return 0;
   }
+}
+
+/* The dispatcher's HTTPS cannot be relied on (a sandboxed console network
+ * drops it), so the WebView - which is already online - fetches the payloads
+ * and streams them onto disk under /data/autoldr/payloads. The local manifest
+ * is then rewritten around local: targets. Returns only when every remote
+ * entry was staged, so the on-disk manifest is consistent or untouched. */
+async function stageConsoleManifest(p, chain) {
+  const origin = /^https?:/.test(window.location.origin || "")
+    ? window.location.origin
+    : "https://pweb5.pages.dev";
+
+  let text;
+  try {
+    const loaded = await readConsoleFileBytes(p, chain, LOCAL_MANIFEST, LOG_MAX_BYTES);
+    text = loaded ? new TextDecoder().decode(loaded) : null;
+  } catch (e) {
+    text = null;
+  }
+  if (!text) {
+    const response = await fetchWithTimeout("manifest.txt", 30000);
+    if (!response.ok) throw new Error("site manifest fetch failed: HTTP " + response.status);
+    text = await response.text();
+  }
+
+  // A commented-out kstuff line is not a kstuff line.
+  const activeLines = text.split("\n").map((l) => l.replace(/#.*$/, "").trim());
+  const kstuffNamed = activeLines.some((l) => l !== "" && /kstuff/i.test(l));
+  /* A missing kstuff line means the dispatcher will pick one itself; mirror
+   * the same pick here so a wrong build does not quietly load. */
+  const modern = !!window.fw_str && window.fw_str !== "" &&
+    !(parseFloat(window.fw_str) <= 10.01);
+  if (!kstuffNamed) text += (text.trim() ? "\n" : "") +
+    (modern
+      ? "kstuff-lite.elf=payloads/kstuff-lite-1.11B.elf\n"
+      : "kstuff.elf=payloads/kstuff.elf\n");
+
+  const lines = text.split("\n");
+  const out = [];
+  let staged = 0, rewritten = 0;
+
+  for (const raw of lines) {
+    const stripped = raw.replace(/#.*$/, "").trim();
+    if (!stripped) { out.push(raw); continue; }
+    const eq = stripped.indexOf("=");
+    const name = (eq < 0 ? stripped : stripped.slice(0, eq)).trim();
+    const target = (eq < 0 ? "payloads/" + name : stripped.slice(eq + 1)).trim();
+    if (/^local:/i.test(target)) { out.push(raw); continue; }
+
+    /* Bare names and the explicit payloads/ form resolve the same way the
+     * dispatcher treats them: under the site's payloads/ directory. */
+    const url = /^https?:\/\//i.test(target) ? target
+      : /^\/\//.test(target) ? "https:" + target
+      : origin + "/" + (/^payloads\//.test(target) ? target : "payloads/" + target);
+
+    const bin = url.split("?")[0].split("/").pop();
+    window.writeLog("staging " + name + " -> " + LOCAL_PAYLOADS_DIR + "/" + bin, "info");
+    try {
+      const response = await fetchWithTimeout(url, 30000);
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      const elf = new Uint8Array(await response.arrayBuffer());
+      if (elf.length < 4 || elf[0] !== 0x7f || elf[1] !== 0x45 || elf[2] !== 0x4c || elf[3] !== 0x46)
+        throw new Error("not an ELF (a CDN error page?)");
+      await ensureDir(p, chain, LOCAL_PAYLOADS_DIR);
+      await writeConsoleFile(p, chain, LOCAL_PAYLOADS_DIR + "/" + bin, elf);
+      out.push(name + "=local:" + LOCAL_PAYLOADS_DIR + "/" + bin);
+      staged++;
+      rewritten++;
+    } catch (e) {
+      /* Do not leave a half-staged manifest: the local file would shrink
+       * boot-time flexibility and any entry we could not stage is one the
+       * dispatcher would need HTTPS for anyway. */
+      window.writeLog("could not stage " + name + " (" + e.message + "); the dispatcher will try its own network", "warning");
+      return;
+    }
+  }
+
+  out.unshift("# rewritten by the staging page with local: targets; the", "# originals' bytes are under /data/autoldr/payloads.");
+  await ensureDir(p, chain, LOCAL_ROOT);
+  await writeConsoleFile(p, chain, LOCAL_MANIFEST, new TextEncoder().encode(out.join("\n") + "\n"));
+  window.writeLog("staged " + staged + " payload(s) onto the console; the dispatcher will load them from disk", "success");
 }
 
 async function loadPayloads(p, chain, watchMs) {
@@ -632,11 +728,21 @@ async function loadPayloads(p, chain, watchMs) {
    * the UI can count it before the dispatcher has said anything. The dispatcher
    * reads the manifest itself, and its own log replaces this count the moment
    * it reports the plan. */
-  window.jb.plannedPayloads = await countPlannedPayloads();
+  window.jb.plannedPayloads = await countPlannedPayloads(p, chain);
   /* Set before the handoff, not after: waitForPayloads() uses this to know the
    * log is the signal, so it must be true by the time the "sent" line it would
    * otherwise fall back on appears. */
   window.jb.dispatcherArmed = true;
+
+  /* Stage the payloads through the WebView before the dispatcher starts,
+   * because the console-side HTTPS is unreliable; if this fails we still
+   * send dispatcher.elf - the failure modes down there cannot be worse
+   * for it than the ones the dispatcher already reports. */
+  try {
+    await stageConsoleManifest(p, chain);
+  } catch (e) {
+    window.writeLog("payload staging skipped: " + e.message, "warning");
+  }
 
   const payload = await mapElfFromUrl(entry.url, p, chain);
   entry.size = payload.size;
@@ -664,6 +770,13 @@ async function loadPayloads(p, chain, watchMs) {
    * writes would corrupt both. */
   window.jb.dispatcherWatch = watchDispatcherLog(p, chain, from, watchMs);
   return [entry];
+}
+
+function fetchWithTimeout(url, ms, init) {
+  return Promise.race([
+    fetch(url, init || { cache: "no-store" }),
+    new Promise((_, reject) => setTimeout(() => reject(new Error(url + " timed out at the WebView")), ms)),
+  ]);
 }
 
 /* Resolves once the dispatcher says it is finished, which is the only thing that
@@ -770,7 +883,7 @@ export async function boot() {
   const override = new URLSearchParams(location.search).get("webkitTimeout");
   const webkitTimeout = override ? Number(override) * 1000 : 300000;
   const payloadTimeout = Number(
-    new URLSearchParams(location.search).get("payloadTimeout") || 120,
+    new URLSearchParams(location.search).get("payloadTimeout") || 300,
   ) * 1000;
   /* The kernel stage walks every armed AIO group and clears it, and each step
    * is a kernel round trip through the ROP primitive. It has no bound of its
@@ -802,11 +915,6 @@ export async function boot() {
    * is driven from here against the same ROP handles main.js publishes.
    *
    * The wait is armed BEFORE main() so the first payload line cannot be missed. */
-  const payloads = waitForPayloads(payloadTimeout).catch((e) => {
-    window.jb.mark("Autoload", e.message);
-    return e;
-  });
-
   await withDeadline(main(primitive), kernelTimeout, "the kernel stage", () => {
     const phase = lastKernelPhase();
     return phase === "unknown" ? null : phase;
@@ -828,5 +936,5 @@ export async function boot() {
   }
 
   await loadPayloads(window.jb.p, window.jb.chain, payloadTimeout);
-  return payloads;
+  return waitForPayloads(payloadTimeout);
 }

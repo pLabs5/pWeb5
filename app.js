@@ -400,7 +400,7 @@ window.jb = {
     markStage(name, detail);
   },
   /* The dispatcher runs on the console, past the last thing this page used to
-   * watch. It writes every line it emits to /data/autodr/dispatcher.log, and
+   * watch. It writes every line it emits to /data/autoldr/dispatcher.log, and
    * boot.js reads that file back over the same exploit primitive the payload
    * arrived on and reports it here. So the queue, the counts and the verdict
    * come from the dispatcher's own log rather than from this page's guess at
@@ -476,7 +476,7 @@ function appendPayload(name) {
 
 /* ---------- dispatcher events ----------
  *
- * boot.js tails /data/autodr/dispatcher.log on the console and reports what it
+ * boot.js tails /data/autoldr/dispatcher.log on the console and reports what it
  * finds there. These are its events. The dispatcher runs past the last thing
  * this page used to be able to watch, so once these start arriving they are the
  * authority on the payload queue and on whether the run worked.
@@ -762,7 +762,7 @@ function watchPayloadProgress() {
         stage(4, "running", sentCount + "/" + payloadEntries.length);
         if (i === payloadEntries.length - 1)
           log("dispatcher.elf now sends the rest of the chain itself - " +
-              "reporting it from /data/autodr/dispatcher.log", "info");
+              "reporting it from /data/autoldr/dispatcher.log", "info");
       }
     }
     if (sentCount === payloadEntries.length) {
@@ -867,10 +867,31 @@ function start() {
      than firing on load. ?auto=1 skips the gate - the headless chain probe
      and the on-console retest both use it. */
   if (q.get("auto") === "1") { launch(); return; }
-  $("go").addEventListener("click", launch);
+
+  /* Not auto-run instantly: the exploit sprays the moment launch() fires,
+   * so leave a visible countdown on the boot screen. A tap on JAILBREAK
+   * skips the wait for someone who is in a hurry. */
+  var remaining = 10;
+  $("goNote").textContent = "auto-starts in " + remaining + "s - tap JAILBREAK to start now";
+  var countdown = setInterval(function () {
+    remaining--;
+    if (remaining <= 0) {
+      clearInterval(countdown);
+      launch();
+    } else {
+      $("goNote").textContent = "auto-starts in " + remaining + "s - tap JAILBREAK to start now";
+    }
+  }, 1000);
+  $("go").addEventListener("click", function () {
+    clearInterval(countdown);
+    launch();
+  });
 }
 
+var hasLaunched = false;
 function launch() {
+  if (hasLaunched) return;
+  hasLaunched = true;
   $("goWrap").classList.add("hidden");
   $("goNote").classList.add("hidden");
   begin();
