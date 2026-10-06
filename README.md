@@ -47,12 +47,16 @@ Five stages, in order:
 | 2 | rop worker | worker stack discovery and the ROP chain |
 | 3 | kernel | kernel rw, process, pipes, privileges |
 | 4 | elfldr | kexp loads, elfldr listens on :9021 |
-| 5 | autoload | the plugin chain, sent to elfldr in order |
+| 5 | autoload | `dispatcher.elf` is sent to elfldr, and it sends the plugins |
+
+Stage 5 is one payload, not three. The page's progress view shows the
+dispatcher; what the dispatcher then does is on the console, in
+`/data/autodr/dispatcher.log`.
 
 Each one ticks off as it completes and the log below shows the chain's own
 output. At the end you get a verdict — **JAILBROKEN** or **FAILED** — with a
-summary: firmware, viewport, which manifest was used, which plugins were sent,
-how many bytes moved, and how long it took. **view run** puts the full log back.
+summary: firmware, viewport, which plugins were sent, how many bytes moved, and
+how long it took. **view run** puts the full log back.
 
 If a stage stalls, the page gives up on it rather than sitting there forever, and
 says which phase it stalled in.
@@ -88,8 +92,13 @@ reports success on a half-built primitive.
 
 ## what you get
 
-The plugin list is not hardcoded in the page — it comes from `manifest.txt`,
-which also decides the order:
+The page's last job is handing elfldr one payload, `dispatcher.elf`. That
+payload reads `manifest.txt`, works out the kstuff build for the firmware, and
+sends everything else to elfldr itself, over the console's own sockets. The
+page can then be closed without stranding the chain.
+
+The plugin list is not hardcoded in the dispatcher either — it comes from
+`manifest.txt`, which also decides the order:
 
 | plugin | what it is |
 |--------|------------|
@@ -103,7 +112,15 @@ to and including 10.01, kstuff-lite above that.
 There is a **5 second gap between plugins**, and it matters. etaHEN starts its
 FTP server the moment it lands and shadowmountplus remounts `/system_ex`;
 sending them close together panics the console. Each one is fetched, streamed to
-elfldr, and confirmed before the next starts.
+elfldr, and waited out before the next starts.
+
+A payload that will not send **stops the chain** instead of being skipped.
+Skipping would leave everything after it depending on something that never
+loaded, which is worse than a run that fails and names the entry.
+
+The dispatcher writes what it is doing to `/data/autodr/dispatcher.log` as well
+as stdout. Set `DISPATCHER_DRYRUN=1` in the console environment to make it print
+the whole plan and send nothing.
 
 ### etaHEN has stopped working
 
@@ -154,9 +171,10 @@ you can pin a build.
 
 **Be honest about the risk here:** only `/data/autoldr/` is reachable with a
 `local:` target, `..` is rejected, and the file has to be on the console before
-the run starts. But a console-local manifest and `local:` plugins are new, and
-neither has been run on real hardware. The site's own manifest works; treat your
-own as untested.
+the run starts. Neither the dispatcher itself nor a console-local manifest has
+been run on real hardware yet. The parsing, the kstuff pick and the `local:`
+checks are covered by host tests in `dispatcher/tests/`; the send path is not,
+because it needs a console. Treat your own manifest as untested.
 
 ## making the Store tile your launcher
 
@@ -198,7 +216,6 @@ refusing. Two-digit minors are normalised, so `13.2` and `13.20` are the same.
 | `?webkitTimeout=N` | give up on the webkit stage after N seconds (default 300) |
 | `?kernelTimeout=N` | give up on the kernel stage after N seconds (default 600) |
 | `?payloadTimeout=N` | give up on the plugin stage after N seconds (default 120) |
-| `?payloadDelay=N` | seconds between plugins (default 5) |
 
 Lowering a timeout does not make the chain faster, it only makes the page stop
 waiting. The defaults are generous on purpose — the kernel stage can legitimately
@@ -243,6 +260,32 @@ The exploit chain under `src/` is KAR0218's rework of Relapse, adapted here (see
 the top of [`src/boot.js`](src/boot.js) for exactly what changed). The bundled
 plugin binaries under `payloads/` are third-party builds and keep their own
 terms — they are redistributed, not relicensed.
+
+## building the dispatcher
+
+`payloads/dispatcher.elf` is built from [`dispatcher/main.c`](dispatcher/main.c).
+It needs the payload SDK, which is not vendored here:
+
+```bash
+PS5_PAYLOAD_SDK=/path/to/ps5-payload-sdk make -C dispatcher
+```
+
+`tools/build.sh` does that for you when `PS5_PAYLOAD_SDK` is set, and otherwise
+builds the site with whatever `payloads/dispatcher.elf` is already there — so
+the site still assembles on a machine with no SDK.
+
+`dispatcher/llvm-shim.sh` exists because `prospero-clang` finds its real
+compiler and linker through `llvm-config --bindir`, which on Nix and some
+distros points at a directory holding neither. The shim assembles a bindir that
+has both. It runs automatically and prints nothing if the toolchain is already
+fine; set `LLVM_CONFIG` yourself to override it.
+
+The parser, the kstuff firmware pick and the `local:` confinement checks are
+tested on the host, with no console and no SDK:
+
+```bash
+dispatcher/tests/run.sh
+```
 
 ## legal
 

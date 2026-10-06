@@ -25,3 +25,7 @@ node_modules/
 
 # -- build output -- #
 /dist/
+
+# the dispatcher builds in dispatcher/; payloads/dispatcher.elf is the copy
+# that ships, and tools/build.sh refreshes it from the build tree.
+/dispatcher/dispatcher.elf

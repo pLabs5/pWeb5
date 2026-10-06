@@ -533,9 +533,10 @@ function finish(ok, why) {
  * src/boot.js is the only caller of the chain. It is an ES module, so it loads
  * after the classic scripts under src/ have put their globals in place. The
  * promise it returns settles when the payload chain reports back. */
-/* The payload list is not known until boot.js resolves the manifest, which it
- * can only do after the kernel stage. This starts as a placeholder and is
- * replaced the moment the real entries exist; see syncPayloadQueue(). */
+/* The one payload the page sends is not known until boot.js gets past the
+ * kernel stage. This starts as a placeholder and is replaced the moment the
+ * real entry exists; see syncPayloadQueue(). The dispatcher's own progress is
+ * on the console, not here - see /data/autodr/dispatcher.log. */
 var payloadEntries = [];
 
 function syncPayloadQueue() {
@@ -545,10 +546,13 @@ function syncPayloadQueue() {
   renderPayloads(entries.map(function (e) {
     return { name: e.name, url: e.url, size: e.size || 0, local: !!e.local };
   }));
+  /* One payload goes out from here, but it dispatches the rest of the chain, so
+   * the badge counts the plugins the dispatcher will send rather than the one
+   * this page sends. */
+  var planned = window.jb && window.jb.plannedPayloads;
   $("srcBadge").textContent = payloadEntries.length + " queued";
-  $("kPayload").textContent = payloadEntries.length + " plugins";
-  var src = rawLogLines.filter(function (l) { return l.indexOf("manifest: ") === 0; }).pop();
-  $("kSource").textContent = src ? src.slice("manifest: ".length) : "manifest";
+  $("kPayload").textContent = (planned || payloadEntries.length) + " plugins";
+  $("kSource").textContent = "dispatcher.elf";
   return true;
 }
 
@@ -586,8 +590,10 @@ function watchMilestones() {
 }
 
 function watchPayloadProgress() {
-  /* boot.js logs "<name> sent" as each entry lands on elfldr, in manifest
-   * order. Names come from the manifest, so nothing is matched by position. */
+  /* boot.js logs "<name> sent" once the dispatcher has been handed to elfldr.
+   * That is the end of what this page can observe: everything after it happens
+   * on the console, so this deliberately reports one payload rather than
+   * pretending to watch the chain it can no longer see. */
   var sent = {};
   var timer = setInterval(function () {
     if (!payloadEntries.length) return;
@@ -601,20 +607,15 @@ function watchPayloadProgress() {
         runStats.bytes += payloadEntries[i].size || 0;
         log(name + " -> elfldr :9021 accepted", "success");
         stage(4, "running", sentCount + "/" + payloadEntries.length);
-        /* Announce the inter-payload pause here, right after this entry's
-         * accepted confirmation, so the log reads in the order users expect:
-         * fetching -> sent -> accepted -> waiting. Emitting it from boot.js
-         * raced ahead of this 120ms poll and wedged "waiting" before the
-         * confirmation line. */
-        if (i < payloadEntries.length - 1 &&
-            window.jb && window.jb.nextDelay)
-          log("waiting " + window.jb.nextDelay + "s before the next plugin", "info");
+        if (i === payloadEntries.length - 1)
+          log("dispatcher.elf now sends the rest of the chain itself - " +
+              "see /data/autodr/dispatcher.log", "info");
       }
     }
     if (sentCount === payloadEntries.length) {
       clearInterval(timer);
       stage(4, "done", "sent");
-      log("all plugins delivered to elfldr :9021", "success");
+      log("dispatcher.elf delivered to elfldr :9021", "success");
     }
   }, 120);
 }

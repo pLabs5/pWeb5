@@ -184,42 +184,31 @@ async function getPrimitive(timeoutMs) {
  * The chain's kexp.js brings elfldr up and then stops - it exports only
  * runKexp, and has no idea a payload list exists. That is deliberate: upstream
  * Relapse and KAR0218 both hardcode the plugin list and its order inside their
- * own loaders. The manifest decides both here instead, against the handles
- * main.js publishes on window.jb, so the chain is not edited to serve it.
+ * own loaders.
  *
- * A payload is loaded straight into ROP memory and streamed to elfldr from
- * there, so a payload that lives on the console costs the same as one fetched
- * over HTTP: the bytes never pass through the page.
+ * The page used to make that list the fourth stage of the chain: parse
+ * manifest.txt here, map each plugin into ROP memory, and stream it to elfldr
+ * one socket at a time. It tied the rest of the jailbreak to this page staying
+ * alive, and it had no way to know whether a payload had actually taken - the
+ * UI's "accepted" state was our own "sent" log line coming back to be polled.
+ *
+ * So the page now has one job after kexp: hand elfldr a single payload,
+ * dispatcher.elf, which resolves the manifest and sends everything else itself
+ * over the console's own sockets. See dispatcher/main.c. manifest.txt is read
+ * by that payload now, not by this page.
  * ------------------------------------------------------------------ */
 
 const FS = {
-  READ: 0x003,
   WRITE: 0x004,
-  OPEN: 0x005,
   CLOSE: 0x006,
   SOCKET: 0x061,
   CONNECT: 0x062,
   MMAP: 0x1dd,
-  LSEEK: 0x1de,
 };
-const O_RDONLY = 0x0000;
 const PROT_RW = 0x3;
 const MAP_PRIVATE_ANON = 0x1002;
 const ELFDR_PORT = 9021;
 const CHUNK = 0x10000;
-const SEEK_SET = 0x0;
-const SEEK_END = 0x2;
-/* Console-local paths are addressed under this root and nowhere else, so a
- * manifest cannot ask the exploit to open an arbitrary path on the console. */
-const LOCAL_ROOT = "/data/autoldr";
-/* Where a console-local manifest lives, and how big one is allowed to be. A
- * manifest is a handful of short lines; the cap just stops a stray large file
- * from turning into a big read before any payload has loaded. */
-const LOCAL_MANIFEST_PATH = LOCAL_ROOT + "/manifest.txt";
-const MAX_TEXT_SIZE = 0x10000;
-/* A ceiling, not a reservation: the mapping below is sized from the file, and
- * this only rejects a size a payload could not plausibly be. */
-const MAX_LOCAL_SIZE = 0x4000000;
 
 /* The network path, matching kexp's mapElf. */
 async function mapElfFromUrl(url, p, chain) {
@@ -248,52 +237,6 @@ function readU32(bytes, offset) {
       (bytes[offset + 3] << 24)) >>>
     0
   );
-}
-
-function low(result) {
-  if (result === null || result === undefined) return -1;
-  return typeof result === "object" && result.low !== undefined ? result.low | 0 : result | 0;
-}
-
-/* The console-local path. Same {base, size} shape as mapElfFromUrl, so the two
- * are interchangeable and the sender cannot tell them apart.
- *
- * Only reachable after the kernel stage, which is where payloads load anyway:
- * before it the page has no filesystem access at all. The mapping is sized from
- * the file with lseek rather than a fixed ceiling - the ceiling version reserved
- * 16MB per candidate and two of those was enough to wedge the exploit on
- * console, which is why the local path was removed in 4ba38c6. */
-async function mapElfFromDisk(path, p, chain) {
-  /* p.stringify is what kexp uses for names handed to the kernel: a
-   * NUL-terminated copy in ROP memory that keeps its backing alive. */
-  const pathAddr = p.stringify(path);
-
-  const fd = low(await chain.syscall(FS.OPEN, pathAddr, O_RDONLY, 0));
-  if (fd < 0) throw new Error("cannot open " + path + " on the console");
-
-  try {
-    const size = low(await chain.syscall(FS.LSEEK, fd, 0, SEEK_END));
-    if (size < 0) throw new Error("cannot size " + path + " on the console");
-    if (size < 0x1000) throw new Error(path + " is too small to be an ELF");
-    if (size > MAX_LOCAL_SIZE) throw new Error(path + " is " + size + " bytes, over the local limit");
-    await chain.syscall(FS.LSEEK, fd, 0, SEEK_SET);
-
-    const mapped = await chain.syscall(FS.MMAP, 0, (size + 0x3fff) & ~0x3fff, PROT_RW, MAP_PRIVATE_ANON, -1, 0);
-    if (mapped.low >>> 0 === 0xffffffff || mapped.low < 0x10000)
-      throw new Error("mmap failed for " + path);
-
-    let total = 0;
-    while (total < size) {
-      const got = low(await chain.syscall(FS.READ, fd, mapped.add32(total), Math.min(CHUNK, size - total)));
-      if (got <= 0) break;
-      total += got;
-    }
-    if (total !== size) throw new Error(path + " read " + total + " of " + size + " bytes");
-    if (p.read4(mapped) >>> 0 !== 0x464c457f) throw new Error(path + " is not an ELF");
-    return { base: mapped, size: total };
-  } finally {
-    await chain.syscall(FS.CLOSE, fd);
-  }
 }
 
 async function connectToElfldr(p, chain) {
@@ -328,211 +271,60 @@ async function sendMapped(name, payload, p, chain) {
   }
 }
 
-/* A manifest target is one of three things: a path on this site, which resolves
- * under payloads/; an absolute http/https URL to a payload hosted anywhere else
- * (/ /host/path is left alone and the WebView resolves it against the page's
- * scheme); or a console-local path behind a "local:" prefix, which is the only
- * form that reads the console's filesystem. Rejecting every other scheme is the
- * point: left alone it would be fetched as a path on this site and 404, naming
- * nothing useful. */
-function parseEntry(name, target) {
-  if (!target) throw new Error("manifest: " + name + " has no target");
+/* The one payload this page sends. Everything the manifest names is dispatched
+ * by it, natively, so closing this page no longer strands the chain. */
+const DISPATCHER_URL = "payloads/dispatcher.elf";
+const DISPATCHER_NAME = "dispatcher.elf";
 
-  if (/^local:/i.test(target)) {
-    const path = target.slice("local:".length);
-    if (path.indexOf(LOCAL_ROOT + "/") !== 0)
-      throw new Error("manifest: " + name + " has to be under " + LOCAL_ROOT + "/, got " + path);
-    /* The prefix alone is not confinement: the kernel resolves ".." and "." when
-     * it opens the path, so a target could start under the root and land outside
-     * it. Reject the traversal here instead of trusting the prefix. */
-    if (path.split("/").some((part) => part === ".."))
-      throw new Error("manifest: " + name + " must not contain .., got " + path);
-    return { name: name, url: path, local: true };
-  }
-  if (/^(https?:)?\/\//i.test(target)) return { name: name, url: target, local: false };
-  if (/^[a-z][a-z0-9+.-]*:/i.test(target))
-    throw new Error("manifest: " + name + " must be an http or https URL, got " + target);
-  return { name: name, url: "payloads/" + target.replace(/^payloads\//, ""), local: false };
-}
-
-function parseManifest(text) {
-  const entries = [];
-  for (const raw of String(text).split("\n")) {
-    /* Strip a trailing comment as well as whole-line ones: a target left with
-     * " # ..." appended would be opened as a literal path and simply fail. */
-    const line = raw.replace(/#.*$/, "").trim();
-    if (!line) continue;
-    const eq = line.indexOf("=");
-    if (eq < 0) entries.push(parseEntry(line, line));
-    else {
-      const name = line.slice(0, eq).trim();
-      entries.push(parseEntry(name, line.slice(eq + 1).trim()));
-    }
-  }
-  return entries;
-}
-
-/* Read a console-local text file into a JS string.
- *
- * This is what a local manifest needs, and it is deliberately not mapElfFromDisk:
- * a manifest is text, not an ELF, so the magic check there would reject every
- * real one. The old attempt failed for a different reason anyway - it mapped a
- * fixed 16MB per candidate, twice, before any payload loaded, which was enough
- * to wedge the exploit (4ba38c6). Here the bytes go into a malloc'd buffer that
- * is already backed by a JS array, so there is no mapping to reserve at all and
- * the read lands somewhere the page can just index into.
- *
- * Returns null when the file is not there, which is the normal case: most
- * consoles have no local manifest and must not be treated as broken. */
-async function readTextFromDisk(path, p, chain) {
-  const pathAddr = p.stringify(path);
-
-  const fd = low(await chain.syscall(FS.OPEN, pathAddr, O_RDONLY, 0));
-  if (fd < 0) return null;
-
-  try {
-    const size = low(await chain.syscall(FS.LSEEK, fd, 0, SEEK_END));
-    if (size < 0) return null;
-    /* A manifest is a short text file. Anything this big is not one, and the
-     * read loop below is per-chunk, so cap it rather than trust the size. */
-    if (size === 0 || size > MAX_TEXT_SIZE) return null;
-    await chain.syscall(FS.LSEEK, fd, 0, SEEK_SET);
-
-    const buffer = p.malloc(size, 1);
-    let total = 0;
-    while (total < size) {
-      const got = low(await chain.syscall(FS.READ, fd, buffer.add32(total), Math.min(CHUNK, size - total)));
-      if (got <= 0) break;
-      total += got;
-    }
-    if (total !== size) return null;
-
-    const bytes = buffer.backing;
-    let text = "";
-    for (let i = 0; i < total; i++) text += String.fromCharCode(bytes[i]);
-    return text;
-  } finally {
-    await chain.syscall(FS.CLOSE, fd);
-  }
-}
-
-/* kstuff is the one payload that always loads, and which build is firmware's
- * call: full kstuff is supported up to and including 10.01, and kstuff-lite is
- * the one for anything newer. A local manifest does not have to name it, and
- * when it does, that line is used instead of this pick. */
-const KSTUFF = [
-  { max: [10, 1], name: "kstuff.elf", url: "payloads/kstuff.elf" },
-  { max: null, name: "kstuff-lite.elf", url: "payloads/kstuff-lite-1.11B.elf" },
-];
-const KSTUFF_NAME = /kstuff/i;
-
-function kstuffEntry() {
-  const version = String(window.fw_str || "");
-  const match = /^(\d+)\.(\d+)/.exec(version);
-  if (match) {
-    const current = [+match[1], +match[2]];
-    for (const build of KSTUFF) {
-      if (build.max === null || (current[0] < build.max[0] || (current[0] === build.max[0] && current[1] <= build.max[1])))
-        return { name: build.name, url: build.url, local: false };
-    }
-  }
-  /* Unknown firmware: the site rejects it outright later, so this only decides
-   * what to send first. The modern build is the safer guess. */
-  return { name: KSTUFF[1].name, url: KSTUFF[1].url, local: false };
-}
-
-/* A console-local manifest at LOCAL_MANIFEST_PATH is read after the kernel
- * stage and REPLACES the site's manifest when it is there - it is the console
- * owner's list, not an addition to it. Only kstuff is forced on top of it, so a
- * local file picks its own plugins and their order without having to restate
- * the jailbreak payload that has to go first regardless.
- *
- * Only reached once the chain can read the console's filesystem at all, which
- * is the same point the local: payload entries need. */
-async function resolveEntries(p, chain) {
-  /* A missing or unreadable local manifest is not an error - it is the normal
-   * case for anyone who has not made one. Only a local file that parses but
-   * names something wrong fails the run, same as a bad line on the site. */
-  let localText = null;
-  try {
-    localText = await readTextFromDisk(LOCAL_MANIFEST_PATH, p, chain);
-  } catch (e) {
-    window.writeLog("manifest: " + LOCAL_MANIFEST_PATH + " unreadable: " + e.message, "warning");
-  }
-  if (localText !== null) {
-    const own = parseManifest(localText);
-    /* A kstuff line in the local manifest is the console owner's choice of
-     * build, so it wins and ours is not added on top - naming one is how you
-     * override the firmware pick. With none named, the firmware decides,
-     * because that payload has to land first either way. */
-    const named = own.filter((entry) => KSTUFF_NAME.test(entry.name));
-    const rest = own.filter((entry) => !KSTUFF_NAME.test(entry.name));
-    const kstuff = named.length ? named[0] : kstuffEntry();
-    window.writeLog("manifest: " + LOCAL_MANIFEST_PATH + " (console) replaces the site list, +" + rest.length +
-      (named.length ? ", kstuff named locally" : ", kstuff by firmware"), "info");
-    return [kstuff].concat(rest);
-  }
-
-  let text = null;
+/* How many entries the manifest names, plus kstuff if the manifest did not
+ * name one - the same rule the dispatcher applies. Best effort: this is for the
+ * UI's plugin count, and failing to read the manifest here says nothing about
+ * whether the dispatcher can read it on the console. */
+async function countPlannedPayloads() {
   try {
     const response = await fetch("manifest.txt", { cache: "no-store" });
-    if (response.ok) text = await response.text();
-  } catch (e) {
-    /* fall through to the default below */
-  }
-  /* Parsed outside the try on purpose: a manifest that fetched but has a bad
-   * line in it has to fail the run rather than quietly hand back the fallback,
-   * which would load the wrong payloads and still report success. */
-  if (text !== null) {
-    const parsed = parseManifest(text);
-    if (parsed.length) {
-      window.writeLog("manifest: manifest.txt (site)", "info");
-      return parsed;
+    if (!response.ok) return 0;
+    let named = 0, kstuff = false;
+    for (const raw of String(await response.text()).split("\n")) {
+      const line = raw.replace(/#.*$/, "").trim();
+      if (!line) continue;
+      const eq = line.indexOf("=");
+      const name = (eq < 0 ? line : line.slice(0, eq)).trim();
+      if (!name) continue;
+      named++;
+      if (/kstuff/i.test(name)) kstuff = true;
     }
+    return named + (kstuff ? 0 : 1);
+  } catch (e) {
+    return 0;
   }
-  /* Must mirror the order in manifest.txt: kstuff first, then etaHEN on its own,
-   * then shadowmountplus last. Reordering here reintroduces the panic. */
-  window.writeLog("manifest: unavailable, using the built-in fallback", "warning");
-  return [
-    { name: "kstuff-lite.elf", url: "payloads/kstuff-lite-1.11B.elf", local: false },
-    { name: "etahen.elf", url: "payloads/etaHEN.elf", local: false },
-    { name: "shadowmountplus.elf", url: "payloads/shadowmountplus.elf", local: false },
-  ];
 }
 
-/* Send every entry in manifest order, waiting between them. etaHEN starts its
- * FTP server the moment it lands and shadowmountplus remounts /system_ex, so
- * the two must not be in flight at the same time - that combination is what
- * panicked the console. ?payloadDelay=N overrides the gap in seconds. */
 async function loadPayloads(p, chain) {
-  const entries = await resolveEntries(p, chain);
-  const query = new URLSearchParams(location.search);
-  const delay = Number(query.get("payloadDelay") || 5) * 1000;
+  const entry = { name: DISPATCHER_NAME, url: DISPATCHER_URL };
 
-  window.writeLog("loading " + entries.length + " plugin(s) from the manifest", "info");
-  window.jb.payloadEntries = entries;
-  /* Handed to app.js's payload watcher, which announces the inter-payload
-   * pause right after each entry's "accepted" confirmation - announcing it
-   * from here raced ahead of the watcher's 120ms poll. */
-  window.jb.nextDelay = delay / 1000;
+  window.writeLog("loading " + DISPATCHER_URL + " - the rest of the chain is dispatched natively", "info");
+  /* app.js reads both of these to draw its progress view. The dispatcher owns
+   * the per-payload pauses now, so there is one entry and no inter-entry delay. */
+  window.jb.payloadEntries = [entry];
+  window.jb.nextDelay = 0;
+  /* What the dispatcher intends to send, read from manifest.txt here purely so
+   * the UI can count it. The dispatcher reads the manifest itself and this page
+   * has no say in what actually loads, so a mismatch here is cosmetic - it is
+   * the dispatcher's own log that says what it did. */
+  window.jb.plannedPayloads = await countPlannedPayloads();
 
-  for (let i = 0; i < entries.length; i++) {
-    const entry = entries[i];
-    const source = entry.url;
-    window.writeLog("[" + (i + 1) + "/" + entries.length + "] fetching " + entry.name + " from " + source, "info");
-    const payload = entry.local
-      ? await mapElfFromDisk(source, p, chain)
-      : await mapElfFromUrl(source, p, chain);
-    await sendMapped(entry.name, payload, p, chain);
-    window.jb.mark("plugin", entry.name + " sent");
-    if (i < entries.length - 1 && delay > 0)
-      await new Promise((resolve) => setTimeout(resolve, delay));
-  }
-  return entries;
+  const payload = await mapElfFromUrl(entry.url, p, chain);
+  entry.size = payload.size;
+  await sendMapped(entry.name, payload, p, chain);
+  window.jb.mark("plugin", entry.name + " sent");
+  return [entry];
 }
 
-/* Resolves once the payload chain has finished. The manifest decides what is
- * last, so completion is "the final entry reported", not any fixed name. */
+/* Resolves once the dispatcher has been handed to elfldr. That is the last
+ * thing this page can observe: it means elfldr took the payload, not that the
+ * plugins behind it loaded. Those are reported by the dispatcher itself, in
+ * /data/autodr/dispatcher.log on the console. */
 function waitForPayloads(timeoutMs) {
   return new Promise((resolve, reject) => {
     const done = (ok, why) => {
