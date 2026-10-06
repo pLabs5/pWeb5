@@ -27,7 +27,7 @@
  */
 
 import { establishPrimitive, fakeCellReleased, CORE_INSTANCE } from "./core.js";
-import { installWindowP, pairStatus, memCoreInstance } from "./utils/mem.js";
+import { installWindowP, pairStatus, memCoreInstance, readInto } from "./utils/mem.js";
 
 /* core.js is module state, and mem.js imports it separately to promote the
  * fake cell. If those two imports ever resolve to different URLs, ES modules
@@ -199,16 +199,21 @@ async function getPrimitive(timeoutMs) {
  * ------------------------------------------------------------------ */
 
 const FS = {
+  READ: 0x003,
   WRITE: 0x004,
+  OPEN: 0x005,
   CLOSE: 0x006,
   SOCKET: 0x061,
   CONNECT: 0x062,
+  MKDIR: 0x088,
   MMAP: 0x1dd,
 };
 const PROT_RW = 0x3;
 const MAP_PRIVATE_ANON = 0x1002;
 const ELFDR_PORT = 9021;
 const CHUNK = 0x10000;
+const O_RDONLY = 0;
+const MKDIR_ANY = 0x1ff;
 
 /* The network path, matching kexp's mapElf. */
 async function mapElfFromUrl(url, p, chain) {
@@ -271,6 +276,321 @@ async function sendMapped(name, payload, p, chain) {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * Watching the dispatcher
+ *
+ * The dispatcher's own output goes to a file on the console, not back to the
+ * page: /data/autodr/dispatcher.log. It has nowhere else to put it, because the
+ * WebView it was handed to cannot be written to from the other side.
+ *
+ * That file is also the answer to "what is it actually loading", because it is
+ * the dispatcher's own account of the run rather than this page's guess at one.
+ * The page can read it: it still holds the read/write primitive and the ROP
+ * chain from the kernel stage, and open(2)/read(2) are syscalls like any other.
+ * So the page watches the log over the same primitive the payload arrived on.
+ * No second listener, no extra port, and nothing for the dispatcher to know
+ * about - which matters, because payloads/dispatcher.elf is a committed binary
+ * and there is no SDK here to rebuild it.
+ *
+ * The one thing the dispatcher needs from outside is the directory. Its logmsg()
+ * opens the log for append and does nothing when that fails, so on a console
+ * with no /data/autoldr/ the file is never created and there is nothing to
+ * watch. Creating it here, over the same syscalls, is why the committed
+ * dispatcher works unchanged.
+ * ------------------------------------------------------------------ */
+
+const LOCAL_ROOT = "/data/autoldr";
+const DISPATCHER_LOG = LOCAL_ROOT + "/dispatcher.log";
+const LOG_READ_CHUNK = 0x4000;
+const LOG_MAX_BYTES = 0x20000;
+const LOG_POLL_MS = 600;
+/* The dispatcher logs its first line the moment it starts, so a run that has
+ * produced nothing by now is not going to. Short enough not to leave the page
+ * hanging on a console we cannot read. */
+const LOG_UNSEEN_GRACE_MS = 8000;
+
+/* The dispatcher's log is plain text with no levels in it - it is a file on the
+ * console, written for whoever opens it later. These are what turn it into the
+ * levels the page renders. Anything unrecognised stays "info", so a line the
+ * dispatcher grows later still shows up instead of being dropped or misfiled.
+ *
+ * This list is deliberately anchored on the reason a line is written, not on the
+ * subsystem that wrote it: "elfldr:" covers both a wait that resolves (warning)
+ * and a listener that never appears (error), and only one of those ends a run.
+ * dispatcher/main.c is the authority on the wording - if a line moves there, it
+ * moves here. */
+const DISPATCH_ERRORS = [
+  /dispatch failed/,
+  /cannot fetch /,
+  /cannot read /,
+  /cannot create request/,
+  /request failed for /,
+  /returned status /,
+  /elfldr: nothing on :\d+/,
+  /elfldr: socket:/,
+  /cannot reach elfldr/,
+  /* the write error carries the payload name in front of it, so it cannot be
+   * matched on a prefix the way the rest of these are */
+  /write failed at \d+\/\d+/,
+  /only \d+ bytes, too small/,
+  /but not an ELF/,
+  /manifest produced no entries/,
+  /cloud manifest unavailable/,
+  /* every sce* bring-up step, which is what a jailbroken-but-no-network
+   * console reports and used to reach this page as nothing at all */
+  /\bsce\w+ failed\b/,
+  /must be an http, https or local: target/,
+  /local target must /,
+  /too many entries/,
+];
+const DISPATCH_WARNINGS = [
+  /retrying$/,
+  /not accepting yet/,
+  /firmware version unavailable/,
+  /not BCD, unrecognised/,
+];
+
+/* "[2/3] etahen.elf <- payloads/etaHEN.elf (console-local)" */
+const DISPATCH_ENTRY = /^\[(\d+)\/(\d+)\] (.+?) <- (\S+?)( \(console-local\))?$/;
+/* "dispatcher: 3 payload(s), dispatching" */
+const DISPATCH_PLAN = /^dispatcher: (\d+) payload\(s\)/;
+/* "etahen.elf: sending 4690760 bytes to elfldr :9021" */
+const DISPATCH_SENDING = /^(\S+): sending (\d+) bytes to elfldr :\d+$/;
+const DISPATCH_WOULD_SEND = /^(\S+): (\d+) bytes, would send to elfldr :\d+$/;
+const DISPATCH_SENT = /^(\S+): sent$/;
+const DISPATCH_DONE = /^dispatcher: done$/;
+
+function dispatchLevel(line) {
+  if (DISPATCH_ERRORS.some((re) => re.test(line))) return "error";
+  if (DISPATCH_WARNINGS.some((re) => re.test(line))) return "warning";
+  return "info";
+}
+
+/* elfldr's readback is echoed into the log verbatim, so the file can hold bytes
+ * that are not text - a control character would move the line on screen and a
+ * lone newline would split one log row into several. Collapse anything outside
+ * printable ASCII, and runs of it, to single spaces. */
+function cleanDispatchLine(raw) {
+  return String(raw).replace(/[^\x20-\x7e]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/* A syscall the offsets file has no entry for comes back as undefined, and
+ * pushing that onto the ROP chain throws a TypeError from inside mem.write8
+ * rather than saying which syscall is missing. offsets/13.00.js ships a
+ * truncated map, so say it here instead. */
+function missingSyscalls(chain, names) {
+  return names.filter((n) => !chain.syscalls[n]);
+}
+
+async function ensureLocalRoot(p, chain) {
+  const slot = p.malloc(LOCAL_ROOT.length + 1);
+  p.writestr(slot, LOCAL_ROOT);
+  /* EEXIST is the normal answer - the directory is already there whenever the
+   * console owner keeps a manifest in it - so only the failure is worth
+   * reporting, and the caller decides what that means. */
+  return (await chain.syscall(FS.MKDIR, slot, MKDIR_ANY, 0)).low | 0;
+}
+
+/* Read a whole file off the console into a Uint8Array. `slot` and `buf` are
+ * console-side allocations the caller owns, passed back in so a polling loop
+ * does not leak a fresh buffer on every tick.
+ *
+ * Returns null when the file cannot be opened, which is the normal state for a
+ * console nobody has dropped a manifest on yet. */
+async function readConsoleFile(chain, path, slot, buf, maxBytes) {
+  const fd = (await chain.syscall(FS.OPEN, slot, O_RDONLY, 0)).low | 0;
+  if (fd < 0) return null;
+
+  const out = new Uint8Array(maxBytes);
+  let total = 0;
+  try {
+    for (;;) {
+      const want = Math.min(LOG_READ_CHUNK, maxBytes - total);
+      if (want <= 0) break;
+      const got = (await chain.syscall(FS.READ, fd, buf, want)).low | 0;
+      if (got <= 0) break;
+      readInto(out.subarray(total, total + got), buf, got);
+      total += got;
+    }
+  } finally {
+    await chain.syscall(FS.CLOSE, fd);
+  }
+  return out.subarray(0, total);
+}
+
+/* Everything the log already holds belongs to an earlier run. Tailing from its
+ * current end is what makes the watcher report THIS run's dispatch instead of
+ * replaying the last one, which is why loadPayloads() takes the offset before
+ * the handoff rather than starting at zero. */
+async function dispatcherLogOffset(p, chain) {
+  const missing = missingSyscalls(chain, [FS.OPEN, FS.READ, FS.CLOSE]);
+  if (missing.length)
+    throw new Error(
+      "these offsets have no syscall for " + missing.map((n) => "0x" + n.toString(16)).join(", ") +
+        ", so the page cannot read the console's disk",
+    );
+
+  const rc = await ensureLocalRoot(p, chain);
+  if (rc !== 0 && rc !== -17)
+    /* -17 is EEXIST. Anything else means the directory is not there and the
+     * dispatcher will not be able to write its log at all. */
+    window.writeLog("could not create " + LOCAL_ROOT + " (errno " + rc + ")", "warning");
+
+  const slot = p.malloc(DISPATCHER_LOG.length + 1, 1);
+  p.writestr(slot, DISPATCHER_LOG);
+  const buf = p.malloc(LOG_READ_CHUNK, 1);
+  const existing = await readConsoleFile(chain, DISPATCHER_LOG, slot, buf, LOG_MAX_BYTES);
+  return existing ? existing.length : 0;
+}
+
+/* Reads the dispatcher's log until it says it is finished, and reports every
+ * line as it lands. Resolves with the run's own verdict, so boot() can hold the
+ * final screen until the chain is genuinely over rather than until the handoff
+ * that started it.
+ *
+ * `unavailable` comes back true when the log could never be read at all, which
+ * is the one case where the page has to fall back to reporting the handoff and
+ * nothing more. */
+async function watchDispatcherLog(p, chain, from, deadlineMs) {
+  const started = Date.now();
+  const failures = [];
+  let finished = false;
+  let sawAny = false;
+  let truncated = false;
+  let lastLine = "";
+
+  const result = { ok: false, why: "", unavailable: true };
+
+  let slot, buf;
+  try {
+    slot = p.malloc(DISPATCHER_LOG.length + 1, 1);
+    p.writestr(slot, DISPATCHER_LOG);
+    buf = p.malloc(LOG_READ_CHUNK, 1);
+  } catch (e) {
+    result.why = "could not set up the dispatcher log reader (" + e.message + ")";
+    window.jb.dispatch({ kind: "unavailable", why: result.why });
+    return result;
+  }
+
+  const report = (line) => {
+    const level = dispatchLevel(line);
+    if (level === "error") failures.push(line);
+    window.jb.dispatch({ kind: "log", line: line, level: level });
+
+    let m;
+    if ((m = DISPATCH_ENTRY.exec(line))) {
+      window.jb.dispatch({
+        kind: "entry",
+        index: Number(m[1]),
+        total: Number(m[2]),
+        name: m[3],
+        target: m[4],
+        local: !!m[5],
+      });
+      return;
+    }
+    if ((m = DISPATCH_PLAN.exec(line))) {
+      window.jb.dispatch({ kind: "plan", count: Number(m[1]) });
+      return;
+    }
+    if ((m = DISPATCH_SENDING.exec(line))) {
+      window.jb.dispatch({ kind: "state", name: m[1], state: "sending", bytes: Number(m[2]) });
+      return;
+    }
+    if ((m = DISPATCH_WOULD_SEND.exec(line))) {
+      window.jb.dispatch({ kind: "state", name: m[1], state: "dryrun", bytes: Number(m[2]) });
+      return;
+    }
+    if ((m = DISPATCH_SENT.exec(line))) {
+      window.jb.dispatch({ kind: "state", name: m[1], state: "sent" });
+      return;
+    }
+    if (DISPATCH_DONE.test(line)) {
+      finished = true;
+      window.jb.dispatch({ kind: "done", ok: failures.length === 0, failures: failures.slice() });
+    }
+  };
+
+  let seen = from;
+  let carry = "";
+
+  for (;;) {
+    let bytes = null;
+    try {
+      bytes = await readConsoleFile(chain, DISPATCHER_LOG, slot, buf, LOG_MAX_BYTES);
+    } catch (e) {
+      window.writeLog("dispatcher log read failed: " + e.message, "warning");
+    }
+
+    if (bytes && bytes.length) {
+      result.unavailable = false;
+      sawAny = true;
+
+      /* Someone truncated or replaced the log under us. Start again from the
+       * top rather than sitting at an offset past the end and reporting
+       * nothing for the rest of the run. */
+      if (bytes.length < seen) {
+        seen = 0;
+        carry = "";
+      }
+
+      if (bytes.length >= LOG_MAX_BYTES && !truncated) {
+        truncated = true;
+        window.writeLog(
+          "dispatcher log is at " + LOG_MAX_BYTES + " bytes, so its oldest lines are not shown",
+          "warning",
+        );
+      }
+
+      if (bytes.length > seen) {
+        carry += new TextDecoder().decode(bytes.subarray(seen, bytes.length));
+        const lines = carry.split("\n");
+        /* The last element is whatever followed the final newline, which is a
+         * line still being written. Hold it until the rest of it lands. */
+        carry = lines.pop();
+        for (const raw of lines) {
+          const line = cleanDispatchLine(raw);
+          if (!line) continue;
+          lastLine = line;
+          report(line);
+        }
+        seen = bytes.length;
+      }
+    }
+
+    if (finished || failures.length) break;
+
+    /* Nothing at all after this long means the log is not coming, and waiting
+     * out the full deadline to learn that only makes the page sit there. Either
+     * the file cannot be read or the dispatcher cannot write it, and neither is
+     * something retrying fixes - the caller reports the run as unverified
+     * rather than as a failure, because the chain itself may well be fine. */
+    if (!sawAny && Date.now() - started > LOG_UNSEEN_GRACE_MS) {
+      result.why = "the dispatcher wrote nothing to its log in " +
+        Math.round(LOG_UNSEEN_GRACE_MS / 1000) + "s, so what it loaded cannot be confirmed";
+      break;
+    }
+
+    if (Date.now() - started > deadlineMs) {
+      result.why = "the dispatcher never finished - last thing it logged: " + lastLine;
+      break;
+    }
+    await sleep(LOG_POLL_MS);
+  }
+
+  if (failures.length) {
+    result.ok = false;
+    result.why = failures[failures.length - 1];
+  } else if (finished) {
+    result.ok = true;
+  }
+
+  if (!result.unavailable) window.jb.dispatch({ kind: "watchEnd", result: result });
+  return result;
+}
+
 /* The one payload this page sends. Everything the manifest names is dispatched
  * by it, natively, so closing this page no longer strands the chain. */
 const DISPATCHER_URL = "payloads/dispatcher.elf";
@@ -300,7 +620,7 @@ async function countPlannedPayloads() {
   }
 }
 
-async function loadPayloads(p, chain) {
+async function loadPayloads(p, chain, watchMs) {
   const entry = { name: DISPATCHER_NAME, url: DISPATCHER_URL };
 
   window.writeLog("loading " + DISPATCHER_URL + " - the rest of the chain is dispatched natively", "info");
@@ -309,31 +629,86 @@ async function loadPayloads(p, chain) {
   window.jb.payloadEntries = [entry];
   window.jb.nextDelay = 0;
   /* What the dispatcher intends to send, read from manifest.txt here purely so
-   * the UI can count it. The dispatcher reads the manifest itself and this page
-   * has no say in what actually loads, so a mismatch here is cosmetic - it is
-   * the dispatcher's own log that says what it did. */
+   * the UI can count it before the dispatcher has said anything. The dispatcher
+   * reads the manifest itself, and its own log replaces this count the moment
+   * it reports the plan. */
   window.jb.plannedPayloads = await countPlannedPayloads();
+  /* Set before the handoff, not after: waitForPayloads() uses this to know the
+   * log is the signal, so it must be true by the time the "sent" line it would
+   * otherwise fall back on appears. */
+  window.jb.dispatcherArmed = true;
 
   const payload = await mapElfFromUrl(entry.url, p, chain);
   entry.size = payload.size;
+
+  /* Taken before the send, not after. The dispatcher starts writing the moment
+   * elfldr loads it, so the end of the log has to be noted while it still only
+   * holds earlier runs - otherwise this run's lines are indistinguishable from
+   * the last one's. */
+  let from = 0;
+  try {
+    from = await dispatcherLogOffset(p, chain);
+  } catch (e) {
+    window.writeLog(
+      "cannot read " + DISPATCHER_LOG + " (" + e.message + ") - this page cannot report what the dispatcher loads",
+      "warning",
+    );
+    window.jb.dispatch({ kind: "unavailable", why: e.message });
+  }
+
   await sendMapped(entry.name, payload, p, chain);
   window.jb.mark("plugin", entry.name + " sent");
+
+  /* Started here rather than inside the send, and not before it: the ROP chain
+   * carries one caller at a time, so a log poll racing sendMapped's socket
+   * writes would corrupt both. */
+  window.jb.dispatcherWatch = watchDispatcherLog(p, chain, from, watchMs);
   return [entry];
 }
 
-/* Resolves once the dispatcher has been handed to elfldr. That is the last
- * thing this page can observe: it means elfldr took the payload, not that the
- * plugins behind it loaded. Those are reported by the dispatcher itself, in
- * /data/autodr/dispatcher.log on the console. */
+/* Resolves once the dispatcher says it is finished, which is the only thing that
+ * means the plugins actually loaded. It used to settle on the "<name> sent"
+ * line instead, which is just the handoff - a run whose plugins all failed
+ * still produced that line, and the verdict said JAILBROKEN.
+ *
+ * The dispatcher's log is that signal (see watchDispatcherLog). If it cannot be
+ * read at all the page is back to knowing only that the handoff happened, so the
+ * old line stays as a fallback rather than the run sitting out its whole
+ * timeout. */
 function waitForPayloads(timeoutMs) {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    let timer = null;
+
     const done = (ok, why) => {
+      if (settled) return;
+      settled = true;
       window.jb.payloadsDone = true;
-      clearInterval(timer);
+      if (timer) clearInterval(timer);
       ok ? resolve() : reject(new Error(why));
     };
 
-    const timer = setInterval(() => {
+    timer = setInterval(() => {
+      const watch = window.jb.dispatcherWatch;
+      if (watch) {
+        clearInterval(timer);
+        timer = null;
+      watch.then(
+        (r) => {
+          /* An unreadable log is not a failed run - it is an unverified one. The
+           * handoff did land, so the chain worked; there is just nothing here
+           * that can say what happened behind it, and finish() says exactly
+           * that instead of claiming the plugins loaded. A log we could read but
+           * which reported a failure is a real failure, and rejects. */
+          if (r.unavailable) done(true, r.why);
+          else done(r.ok, r.why);
+        },
+        (e) => done(false, (e && e.message) || String(e)),
+      );
+        return;
+      }
+      if (window.jb.dispatcherArmed) return;
+
       const lines = window.jb.logLines || [];
       /* The chain reports a failed kexp handoff in its own words now
        * ("elfldr is not confirmed up" / "kexp threw"), and main.js logs the
@@ -348,7 +723,7 @@ function waitForPayloads(timeoutMs) {
       else {
         const entries = window.jb.payloadEntries;
         if (entries && entries.length && lines.some((l) => l.indexOf(entries[entries.length - 1].name + " sent") >= 0))
-          done(true);
+          done(true, "");
       }
     }, 100);
 
@@ -452,6 +827,6 @@ export async function boot() {
     );
   }
 
-  await loadPayloads(window.jb.p, window.jb.chain);
+  await loadPayloads(window.jb.p, window.jb.chain, payloadTimeout);
   return payloads;
 }

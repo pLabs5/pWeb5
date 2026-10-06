@@ -117,6 +117,29 @@ var stageOnce = [];
 var sentCount = 0;
 var runStats = { errors: 0, warnings: 0, bytes: 0 };
 
+/* ---------- payload queue ----------
+ *
+ * The rows here are whatever the run is currently able to say about each payload.
+ * Who fills them changed: this page's own payload list used to be the whole
+ * story, and now it is one entry (dispatcher.elf) plus whatever the dispatcher
+ * reports behind it, read back from its console-side log by boot.js.
+ */
+/* True once the dispatcher owns the queue and its log is the authority. The
+ * page's own "entry sent" watcher stands down then, or it would count
+ * dispatcher.elf as a delivered plugin on top of the dispatcher's own count. */
+var dispatchOwned = false;
+/* How many payloads the dispatcher said it intends to send, once it has said so.
+ * Zero until then, which is why the manifest count boot.js reads up front is
+ * still what fills the queue initially. */
+var dispatchPlan = 0;
+var dispatchFailures = [];
+/* Why the dispatcher's log could not be read, if it could not be. Non-empty
+ * means the queue is back to being this page's own guess, and the verdict says
+ * so rather than claiming the plugins loaded. */
+var dispatchUnavailable = "";
+/* Bytes seen going out per payload, so a retried payload is counted once. */
+var dispatchBytes = {};
+
 /* ---------- console + firmware detection ----------
  *
  * The vendored src/firmware.js hard-rejects unless the UA contains the literal
@@ -364,12 +387,26 @@ function markStage(name, detail) {
 window.jb = {
   logLines: rawLogLines,
   payloadsDone: false,
+  /* Set by boot.js before it hands dispatcher.elf over, once the dispatcher log
+   * on the console is the signal for whether the plugins loaded. See
+   * waitForPayloads() in src/boot.js. */
+  dispatcherArmed: false,
+  dispatcherWatch: null,
   mark: function (name, detail) {
     var text = detail == null || detail === "" ? String(name)
              : String(name) + ": " + String(detail);
     var isFail = /Failed|failed/.test(String(name));
     window.writeLog(text, isFail ? "error" : "info");
     markStage(name, detail);
+  },
+  /* The dispatcher runs on the console, past the last thing this page used to
+   * watch. It writes every line it emits to /data/autodr/dispatcher.log, and
+   * boot.js reads that file back over the same exploit primitive the payload
+   * arrived on and reports it here. So the queue, the counts and the verdict
+   * come from the dispatcher's own log rather than from this page's guess at
+   * what it was doing. Set by boot.js; see watchDispatcherLog(). */
+  dispatch: function (event) {
+    handleDispatch(event);
   }
 };
 
@@ -418,6 +455,100 @@ function setPayload(i, state, label) {
   p.st.textContent = label;
 }
 
+/* The dispatcher's queue arrives one entry at a time as it works through the
+ * manifest, so it is appended to rather than rendered in one go the way the
+ * page's own single-entry list was. Keyed by name because the dispatcher reports
+ * each payload under the same name in every line it logs about it. */
+function appendPayload(name) {
+  for (var i = 0; i < payloadEls.length; i++)
+    if (payloadEls[i].name === name) return i;
+
+  var li = document.createElement("li");
+  var dot = document.createElement("i");
+  var label = document.createElement("span"); label.className = "pname"; label.textContent = name;
+  var st = document.createElement("em"); st.textContent = "queued";
+  li.appendChild(dot); li.appendChild(label); li.appendChild(st);
+  $("plist").appendChild(li);
+  payloadEls.push({ li: li, st: st, name: name });
+  autoCollapse("secQueue", false);
+  return payloadEls.length - 1;
+}
+
+/* ---------- dispatcher events ----------
+ *
+ * boot.js tails /data/autodr/dispatcher.log on the console and reports what it
+ * finds there. These are its events. The dispatcher runs past the last thing
+ * this page used to be able to watch, so once these start arriving they are the
+ * authority on the payload queue and on whether the run worked.
+ */
+function handleDispatch(event) {
+  if (!event) return;
+  var i, total;
+
+  switch (event.kind) {
+  case "log":
+    /* The dispatcher's own output, shown verbatim so it can be matched against
+     * the log on the console line for line. */
+    log(event.line, event.level === "error" ? "error"
+        : event.level === "warning" ? "warning" : "info");
+    break;
+
+  case "plan":
+    dispatchOwned = true;
+    dispatchPlan = event.count;
+    /* The dispatcher's own count replaces the manifest count boot.js read up
+     * front, which was only ever a guess made before anything was readable. */
+    $("kPayload").textContent = event.count + " plugins";
+    break;
+
+  case "entry":
+    dispatchOwned = true;
+    i = appendPayload(event.name);
+    setPayload(i, "", event.index + "/" + event.total + (event.local ? " - console-local" : ""));
+    $("srcBadge").textContent = payloadEls.length + " queued";
+    break;
+
+  case "state":
+    dispatchOwned = true;
+    i = appendPayload(event.name);
+    total = dispatchPlan || payloadEls.length;
+    if (event.state === "sending") {
+      /* Counted once per payload: the dispatcher logs this line again on a
+       * retry, and a retried payload is not another few MB over the wire. */
+      if (dispatchBytes[event.name] == null) {
+        dispatchBytes[event.name] = event.bytes || 0;
+        runStats.bytes += dispatchBytes[event.name];
+      }
+      setPayload(i, "running", "sending " + dispatchBytes[event.name] + " bytes");
+      stage(4, "running", sentCount + "/" + total);
+    } else if (event.state === "dryrun") {
+      setPayload(i, "", event.bytes + " bytes - would send, nothing sent");
+    } else if (event.state === "sent") {
+      sentCount++;
+      setPayload(i, "sent", "sent");
+      stage(4, "running", sentCount + "/" + total);
+    }
+    break;
+
+  case "done":
+    dispatchOwned = true;
+    dispatchFailures = event.failures || [];
+    stage(4, event.ok ? "done" : "fail",
+          sentCount + "/" + (dispatchPlan || payloadEls.length) +
+          (event.ok ? "" : " - " + dispatchFailures.length + " failed"));
+    break;
+
+  case "watchEnd":
+    if (!event.result || event.result.unavailable)
+      dispatchUnavailable = (event.result && event.result.why) || "";
+    break;
+
+  case "unavailable":
+    dispatchUnavailable = event.why || "";
+    break;
+  }
+}
+
 /* clock */
 function tick() {
   $("kTime").textContent = ((Date.now() - t0) / 1000).toFixed(1) + "s";
@@ -445,6 +576,13 @@ function begin() {
   runStats = { errors: 0, warnings: 0, bytes: 0 };
   userToggled = {};
   payloadEls = [];
+  /* Per-run view state for the payload queue. dispatchOwned says whether the
+   * dispatcher (rather than this page) owns it - see watchPayloadProgress(). */
+  dispatchOwned = false;
+  dispatchPlan = 0;
+  dispatchFailures = [];
+  dispatchUnavailable = "";
+  dispatchBytes = {};
 
   setProgress(0, null);
   setNow("starting");
@@ -497,8 +635,15 @@ function finish(ok, why) {
 
   $("done").className = "screen center" + (ok ? "" : " error");
   $("doneTitle").textContent = ok ? "JAILBROKEN" : "FAILED";
+  /* JAILBROKEN says elfldr is up and the dispatcher took the payload. It does
+   * not on its own say the plugins loaded - only the dispatcher's log says
+   * that - so when the log could not be read the sentence says so rather than
+   * leaving the claim unqualified. */
+  var unverified = ok && !!dispatchUnavailable;
   $("doneSub").textContent = ok
-    ? (sentCount + " plugin(s) delivered — close this window")
+    ? (unverified
+        ? "dispatcher delivered, but its log could not be read — plugin load unconfirmed"
+        : sentCount + " plugin(s) delivered — close this window")
     : (why || "chain did not complete");
 
   /* The installer only works once elfldr is actually listening, so it is tied
@@ -522,7 +667,13 @@ function finish(ok, why) {
     "transferred " + runStats.bytes.toLocaleString() + " bytes\n" +
     "elapsed    " + ((Date.now() - t0) / 1000).toFixed(1) + "s\n" +
     "log lines  " + logLines + " (" + runStats.warnings + " warn, " +
-      runStats.errors + " err)";
+      runStats.errors + " err)" +
+    /* The dispatcher's own account of what went wrong. A payload the dispatcher
+     * could not deliver looks exactly like a healthy one from out here without
+     * this, which is the whole reason the log is read. */
+    (dispatchFailures.length
+      ? "\nfailed     " + dispatchFailures.join(" | ")
+      : "");
 
   log(ok ? "run complete" : "run failed: " + (why || "unknown"), ok ? "success" : "error");
 }
@@ -535,8 +686,8 @@ function finish(ok, why) {
  * promise it returns settles when the payload chain reports back. */
 /* The one payload the page sends is not known until boot.js gets past the
  * kernel stage. This starts as a placeholder and is replaced the moment the
- * real entry exists; see syncPayloadQueue(). The dispatcher's own progress is
- * on the console, not here - see /data/autodr/dispatcher.log. */
+ * real entry exists; see syncPayloadQueue(). What the dispatcher does behind
+ * that one entry arrives as events from boot.js; see handleDispatch(). */
 var payloadEntries = [];
 
 function syncPayloadQueue() {
@@ -590,12 +741,14 @@ function watchMilestones() {
 }
 
 function watchPayloadProgress() {
-  /* boot.js logs "<name> sent" once the dispatcher has been handed to elfldr.
-   * That is the end of what this page can observe: everything after it happens
-   * on the console, so this deliberately reports one payload rather than
-   * pretending to watch the chain it can no longer see. */
+  /* boot.js logs "<name> sent" once dispatcher.elf has been handed to elfldr.
+   * That is a handoff, not a loaded plugin, so it stands down as soon as the
+   * dispatcher's own log starts reporting (dispatchOwned) - otherwise it would
+   * count dispatcher.elf as a delivered plugin on top of the dispatcher's count
+   * and put two entries in the queue for one payload. */
   var sent = {};
   var timer = setInterval(function () {
+    if (dispatchOwned) { clearInterval(timer); return; }
     if (!payloadEntries.length) return;
     for (var i = 0; i < payloadEntries.length; i++) {
       if (sent[i]) continue;
@@ -609,7 +762,7 @@ function watchPayloadProgress() {
         stage(4, "running", sentCount + "/" + payloadEntries.length);
         if (i === payloadEntries.length - 1)
           log("dispatcher.elf now sends the rest of the chain itself - " +
-              "see /data/autodr/dispatcher.log", "info");
+              "reporting it from /data/autodr/dispatcher.log", "info");
       }
     }
     if (sentCount === payloadEntries.length) {
