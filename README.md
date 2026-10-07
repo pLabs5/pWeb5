@@ -50,7 +50,7 @@ the page should load, wait 10 seconds and the exploit will start and payloads wi
 
 ## what you get
 
-the main part of the page is sending `dispatcher.elf`, that payload reads either the local manifest at `/data/autoldr/manifest.txt` or the remote `manifest.txt`. after reading / parsing the manifest it fetches the payload from the correct source, either the `payloads/` folder in the repo, the local `/data/autoldr/plugins/` folder on the console, or from a website. 
+the main part of the page is sending `dispatcher.elf`, that payload reads either the local manifest at `/data/pLabs5/pWeb5/manifest.txt` or the remote `manifest.txt`. after reading / parsing the manifest it fetches the payload from the correct source, either the `payloads/` folder in the repo, the local `/data/pLabs5/pWeb5/plugins/` folder on the console, or from a website. 
 the default manifest,txt loads plugins in the following order:
 | plugin | what it is |
 |--------|------------|
@@ -60,7 +60,7 @@ the default manifest,txt loads plugins in the following order:
 
 the version of kstuff that gets used is dependant on your FW, not up to you, ill probably change that at some point
 there is a roughly 5 second delay between each plugin (a `wait=N` key in the manifest sets its own pause; `wait=0` makes it instant), this is to prevent plugins from interferring with eachother.
-`dispatcher.elf` writes everything it does to `/data/autoldr/dispatcher.log`
+`dispatcher.elf` writes everything it does to `/data/pLabs5/pWeb5/dispatcher.log`
 
 ### etaHEN has stopped working
 
@@ -71,18 +71,18 @@ i am currently waiting for the next beta to drop in the `PKG-Zone` discord, once
 
 pWeb5 supports using your own plugins, to do so, create the manifest at:
 ```
-/data/autoldr/manifest.txt
+/data/pLabs5/pWeb5/manifest.txt
 ```
 creating that file causes `dispatcher.elf` to read *your* manifest instead of the sites `manifest.txt`
 
 format / options for manifest.txt (without the leading `<lineNumber>:`)
 ```
-1: # /data/autoldr/manifest.txt < this is a comment
-2: ProsperoMgr.elf=local:/data/autoldr/plugins/ProsperoMgr.elf
+1: # /data/pLabs5/pWeb5/manifest.txt < this is a comment
+2: ProsperoMgr.elf=local:/data/pLabs5/pWeb5/plugins/ProsperoMgr.elf
 3: etahen.elf=payloads/etaHEN.elf 
 ```
 - line 1: just a comment, isn't read by the dispatcher
-- line 2: loads ProsperoMgr.elf from `/data/autoldr/plugins/` on the console
+- line 2: loads ProsperoMgr.elf from `/data/pLabs5/pWeb5/plugins/` on the console
 - line 3: loads etaHEN.elf from: `pweb5.pages.dev/payloads/etaHEN.elf`  
 
 `kstuff` is the **ONLY** exception — it always loads first, because it is what makes the rest work, and you do not have to name it. Name `kstuff.elf` or `kstuff-lite.elf` yourself and that one is used instead of the firmware pick, so you can pin a build.
@@ -108,7 +108,7 @@ after a successful run, the verdict screen shows the **APPLY TO PS STORE** butto
 
 <!-- 
 remove query flags and instead make them config options in:
-/data/autoldr/config.ini
+/data/pLabs5/pWeb5/config.ini
 -->
 
 ## if it goes wrong

@@ -15,7 +15,7 @@ endif
 include $(PS5_PAYLOAD_SDK)/toolchain/prospero.mk
 
 CLOUD_BASE ?= https://pweb5.pages.dev
-LOCAL_ROOT ?= /data/autoldr
+LOCAL_ROOT ?= /data/pLabs5/pWeb5
 
 ELF := dispatcher.elf
 

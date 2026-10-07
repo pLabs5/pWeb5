@@ -6,7 +6,7 @@
 #
 # Resolution order at runtime:
 #
-#   1. /data/autoldr/manifest.txt on the console, if you have one - it wins
+#   1. /data/pLabs5/pWeb5/manifest.txt on the console, if you have one - it wins
 #   2. this file, fetched from the site origin by the dispatcher
 #
 # There is no third fallback. If neither manifest can be read the run stops and
@@ -14,7 +14,7 @@
 #
 # Everything here is fetched over HTTP by the dispatcher. You do not have to
 # edit this file to pick your own plugins: drop a manifest at
-# /data/autoldr/manifest.txt on the console and it replaces this one entirely.
+# /data/pLabs5/pWeb5/manifest.txt on the console and it replaces this one entirely.
 # See "personal plugins" below.
 #
 # Format: one "name=target" per line. Blank lines and lines starting with # are
@@ -32,7 +32,7 @@
 #
 #   payloads/<file>        a file on this site
 #   http(s)://host/<file>  a payload hosted anywhere else
-#   local:/data/autoldr/f  a payload already sitting on the console
+#   local:/data/pLabs5/pWeb5/f  a payload already sitting on the console
 #
 # A "//host/path" target is taken as https. Any other scheme is rejected and the
 # run fails on it, so a typo cannot quietly become a path on this site.
@@ -42,7 +42,7 @@
 # apply to it.
 #
 # A local: target is opened on the console, which is the only place a path like
-# that means anything. Only paths under /data/autoldr/ are reachable - anything
+# that means anything. Only paths under /data/pLabs5/pWeb5/ are reachable - anything
 # else is rejected, and so is a ".." segment, which the kernel would otherwise
 # resolve after the prefix check - and the file has to be on the console before
 # the run starts, because this site has no way to put it there. A local payload
@@ -80,7 +80,7 @@ shadowmountplus.elf=payloads/shadowmountplus.elf
 # Prospector.elf=https://example.com/payloads/Prospector.elf
 
 # --- a payload dropped on the console beforehand, no host needed ---
-# ProsperoMgr.elf=local:/data/autoldr/ProsperoMgr.elf
+# ProsperoMgr.elf=local:/data/pLabs5/pWeb5/ProsperoMgr.elf
 
 # ============================================================================
 # dRPC5 - REMOVED, NOT SHIPPED HERE
@@ -119,16 +119,16 @@ shadowmountplus.elf=payloads/shadowmountplus.elf
 # ============================================================================
 
 # ============================================================================
-# PERSONAL PLUGINS: /data/autoldr/manifest.txt on the console
+# PERSONAL PLUGINS: /data/pLabs5/pWeb5/manifest.txt on the console
 #
 # Put your own entries in that file and it REPLACES this one - your list, your
 # order, your plugins. Same format, same three target forms, including local:
 # for ELFs you dropped on the console. Nothing else from this file is loaded
 # once yours exists, so if you want etaHEN you name it yourself.
 #
-#   /data/autoldr/manifest.txt:
+#   /data/pLabs5/pWeb5/manifest.txt:
 #     # my own stuff
-#     ProsperoMgr.elf=local:/data/autoldr/plugins/ProsperoMgr.elf
+#     ProsperoMgr.elf=local:/data/pLabs5/pWeb5/plugins/ProsperoMgr.elf
 #     etahen.elf=payloads/etaHEN.elf
 #
 # kstuff is the exception: it always loads first, because it is the payload that

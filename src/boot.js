@@ -213,6 +213,9 @@ const MAP_PRIVATE_ANON = 0x1002;
 const ELFDR_PORT = 9021;
 const CHUNK = 0x10000;
 const O_RDONLY = 0;
+const O_WRONLY = 0x1;
+const O_CREAT = 0x200;
+const O_TRUNC = 0x400;
 const MKDIR_ANY = 0x1ff;
 
 /* The network path, matching kexp's mapElf. */
@@ -222,16 +225,21 @@ async function mapElfFromUrl(url, p, chain) {
   const elf = new Uint8Array(await response.arrayBuffer());
   if (elf.length < 0x1000) throw new Error(url + " is too small to be an ELF");
 
-  const size = (elf.length + 0x3fff) & ~0x3fff;
-  const mapped = await chain.syscall(FS.MMAP, 0, size, PROT_RW, MAP_PRIVATE_ANON, -1, 0);
-  if (mapped.low >>> 0 === 0xffffffff || mapped.low < 0x10000)
-    throw new Error("mmap failed for " + url);
-
-  const dwords = elf.length & ~3;
-  for (let offset = 0; offset < dwords; offset += 4) p.write4(mapped.add32(offset), readU32(elf, offset));
-  for (let offset = dwords; offset < elf.length; offset++) p.write1(mapped.add32(offset), elf[offset]);
+  const mapped = await copyToMapped(elf, p, chain, url);
   if (p.read4(mapped) >>> 0 !== 0x464c457f) throw new Error(url + " copy failed");
   return { base: mapped, size: elf.length };
+}
+
+async function copyToMapped(bytes, p, chain, name) {
+  const size = (bytes.length + 0x3fff) & ~0x3fff;
+  const mapped = await chain.syscall(FS.MMAP, 0, size, PROT_RW, MAP_PRIVATE_ANON, -1, 0);
+  if (mapped.low >>> 0 === 0xffffffff || mapped.low < 0x10000)
+    throw new Error("mmap failed for " + name);
+
+  const dwords = bytes.length & ~3;
+  for (let offset = 0; offset < dwords; offset += 4) p.write4(mapped.add32(offset), readU32(bytes, offset));
+  for (let offset = dwords; offset < bytes.length; offset++) p.write1(mapped.add32(offset), bytes[offset]);
+  return mapped;
 }
 
 function readU32(bytes, offset) {
@@ -280,7 +288,7 @@ async function sendMapped(name, payload, p, chain) {
  * Watching the dispatcher
  *
  * The dispatcher's own output goes to a file on the console, not back to the
- * page: /data/autoldr/dispatcher.log. It has nowhere else to put it, because the
+ * page: /data/pLabs5/pWeb5/dispatcher.log. It has nowhere else to put it, because the
  * WebView it was handed to cannot be written to from the other side.
  *
  * That file is also the answer to "what is it actually loading", because it is
@@ -294,12 +302,12 @@ async function sendMapped(name, payload, p, chain) {
  *
  * The one thing the dispatcher needs from outside is the directory. Its logmsg()
  * opens the log for append and does nothing when that fails, so on a console
- * with no /data/autoldr/ the file is never created and there is nothing to
+ * with no /data/pLabs5/pWeb5/ the file is never created and there is nothing to
  * watch. Creating it here, over the same syscalls, is why the committed
  * dispatcher works unchanged.
  * ------------------------------------------------------------------ */
 
-const LOCAL_ROOT = "/data/autoldr";
+const LOCAL_ROOT = "/data/pLabs5/pWeb5";
 const DISPATCHER_LOG = LOCAL_ROOT + "/dispatcher.log";
 const LOG_READ_CHUNK = 0x4000;
 const LOG_MAX_BYTES = 0x20000;
@@ -383,13 +391,24 @@ function missingSyscalls(chain, names) {
   return names.filter((n) => !chain.syscalls[n]);
 }
 
+async function ensureDir(p, chain, path) {
+  const slot = p.malloc(path.length + 1);
+  const names = path.split("/").filter(Boolean);
+  let cur = "";
+  for (const name of names) {
+    cur += "/" + name;
+    p.writestr(slot, cur);
+    /* EEXIST is the normal answer - the directory is already there whenever the
+     * console owner keeps a manifest in it - so only the failure is worth
+     * reporting, and the caller decides what that means. */
+    const rc = (await chain.syscall(FS.MKDIR, slot, MKDIR_ANY, 0)).low | 0;
+    if (rc !== 0 && rc !== -17) return rc;
+  }
+  return 0;
+}
+
 async function ensureLocalRoot(p, chain) {
-  const slot = p.malloc(LOCAL_ROOT.length + 1);
-  p.writestr(slot, LOCAL_ROOT);
-  /* EEXIST is the normal answer - the directory is already there whenever the
-   * console owner keeps a manifest in it - so only the failure is worth
-   * reporting, and the caller decides what that means. */
-  return (await chain.syscall(FS.MKDIR, slot, MKDIR_ANY, 0)).low | 0;
+  return ensureDir(p, chain, LOCAL_ROOT);
 }
 
 /* Read a whole file off the console into a Uint8Array. `slot` and `buf` are
@@ -417,6 +436,32 @@ async function readConsoleFile(chain, path, slot, buf, maxBytes) {
     await chain.syscall(FS.CLOSE, fd);
   }
   return out.subarray(0, total);
+}
+
+async function writeConsoleFile(p, chain, path, bytes) {
+  const slot = p.malloc(path.length + 1);
+  p.writestr(slot, path);
+  const fd = (await chain.syscall(FS.OPEN, slot, O_WRONLY | O_CREAT | O_TRUNC, 0o666)).low | 0;
+  if (fd < 0) throw new Error("cannot open " + path + " (errno " + fd + ")");
+  try {
+    const mapped = await copyToMapped(bytes, p, chain, path);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const length = Math.min(CHUNK, bytes.length - offset);
+      const written = (await chain.syscall(FS.WRITE, fd, mapped.add32(offset), length)).low | 0;
+      if (written <= 0) throw new Error("cannot write " + path + " (errno " + written + ")");
+      offset += written;
+    }
+  } finally {
+    await chain.syscall(FS.CLOSE, fd);
+  }
+}
+
+async function readConsoleFileBytes(p, chain, path, maxBytes) {
+  const slot = p.malloc(path.length + 1, 1);
+  p.writestr(slot, path);
+  const buf = p.malloc(LOG_READ_CHUNK, 1);
+  return readConsoleFile(chain, path, slot, buf, maxBytes);
 }
 
 /* Everything the log already holds belongs to an earlier run. Tailing from its
@@ -637,7 +682,7 @@ async function countPlannedPayloads(p, chain) {
 
 /* The dispatcher's HTTPS cannot be relied on (a sandboxed console network
  * drops it), so the WebView - which is already online - fetches the payloads
- * and streams them onto disk under /data/autoldr/payloads. The local manifest
+ * and streams them onto disk under /data/pLabs5/pWeb5/payloads. The local manifest
  * is then rewritten around local: targets. Returns only when every remote
  * entry was staged, so the on-disk manifest is consistent or untouched. */
 async function stageConsoleManifest(p, chain) {
@@ -696,7 +741,8 @@ async function stageConsoleManifest(p, chain) {
       const elf = new Uint8Array(await response.arrayBuffer());
       if (elf.length < 4 || elf[0] !== 0x7f || elf[1] !== 0x45 || elf[2] !== 0x4c || elf[3] !== 0x46)
         throw new Error("not an ELF (a CDN error page?)");
-      await ensureDir(p, chain, LOCAL_PAYLOADS_DIR);
+      const rc = await ensureDir(p, chain, LOCAL_PAYLOADS_DIR);
+      if (rc !== 0) throw new Error("cannot create " + LOCAL_PAYLOADS_DIR + " (errno " + rc + ")");
       await writeConsoleFile(p, chain, LOCAL_PAYLOADS_DIR + "/" + bin, elf);
       out.push(name + "=local:" + LOCAL_PAYLOADS_DIR + "/" + bin);
       staged++;
@@ -710,8 +756,12 @@ async function stageConsoleManifest(p, chain) {
     }
   }
 
-  out.unshift("# rewritten by the staging page with local: targets; the", "# originals' bytes are under /data/autoldr/payloads.");
-  await ensureDir(p, chain, LOCAL_ROOT);
+  out.unshift("# rewritten by the staging page with local: targets; the", "# originals' bytes are under /data/pLabs5/pWeb5/payloads.");
+  const rootRc = await ensureDir(p, chain, LOCAL_ROOT);
+  if (rootRc !== 0) {
+    window.writeLog("could not create " + LOCAL_ROOT + " (errno " + rootRc + ")", "warning");
+    return;
+  }
   await writeConsoleFile(p, chain, LOCAL_MANIFEST, new TextEncoder().encode(out.join("\n") + "\n"));
   window.writeLog("staged " + staged + " payload(s) onto the console; the dispatcher will load them from disk", "success");
 }

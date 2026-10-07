@@ -12,3 +12,6 @@ currently we do **NOTHING** with configuration, i would like to at some point wo
 ## goal / milestone #3
 currently only 7.00 through 13.60 is added/ working, at some point in the future, i would like to add support for older FW's that the relapse chain doesn't work on:
 * [for 1.00 through 5.00](https://github.com/idlesauce/umtx2)
+
+## goal / milestone #3
+add 'profiles' to load, makes development much easier, as it would allow me to use specific payloads for different situations, klogsvr, debugging tools, etc...

@@ -71,7 +71,7 @@ int sceKernelGetProsperoSystemSwVersion(void *buf);
 #define CLOUD_BASE "https://pweb5.pages.dev"
 #endif
 #ifndef LOCAL_ROOT
-#define LOCAL_ROOT "/data/autoldr"
+#define LOCAL_ROOT "/data/pLabs5/pWeb5"
 #endif
 
 #define LOCAL_MANIFEST LOCAL_ROOT "/manifest.txt"
@@ -699,7 +699,16 @@ main(void)
    * DISPATCHER_PLAN_ONLY stops earlier still, before any fetch, for when there
    * is no network to fetch from and only the resolved plan matters. */
   /* The static CA file and the log both live under LOCAL_ROOT. The page
-   * usually creates it, but a standalone load gets no such courtesy. */
+     usually creates it, but a standalone load gets no such courtesy. */
+  {
+    char root[192];
+    char *slash;
+    snprintf(root, sizeof(root), "%s", LOCAL_ROOT);
+    if ((slash = strrchr(root, '/')) != NULL && slash != root) {
+      *slash = '\0';
+      mkdir(root, 0777);
+    }
+  }
   mkdir(LOCAL_ROOT, 0777); /* EEXIST is fine; nothing to do about anything else */
   g_dryrun = getenv("DISPATCHER_DRYRUN") != NULL;
   g_planonly = getenv("DISPATCHER_PLAN_ONLY") != NULL;
