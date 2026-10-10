@@ -20,4 +20,4 @@ tools/build/build
 
 # the dispatcher builds in dispatcher/; payloads/dispatcher.elf is the copy
 # that ships, and tools/build/build refreshes it from the build tree.
-/dispatcher/dispatcher.elf
+/dispatcher/build/dispatcher.elf
