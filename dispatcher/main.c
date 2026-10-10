@@ -152,6 +152,31 @@ bcd_digit(uint32_t byte)
   return (int)((byte >> 4) * 10 + (byte & 0x0f));
 }
 
+/* Firmware from /system/priv/etc/index.dat, which every installation carries
+ * as "vsh-repository-path: releases/13.20". No kernel imports involved; a
+ * plain payload can read it (the ftpsrv payload does). Returns 0 on any
+ * problems, so the caller falls back to the kernel call. */
+static uint32_t
+firmware_version_from_index_dat(void)
+{
+  FILE *fp;
+  char line[128];
+  unsigned major, minor;
+
+  fp = fopen("/system/priv/etc/index.dat", "r");
+  if (!fp) return 0;
+  while (fgets(line, sizeof(line), fp)) {
+    if (sscanf(line, "vsh-repository-path: releases/%u.%u", &major, &minor) == 2) {
+      fclose(fp);
+      if (major > 99 || minor > 99) return 0;
+      return ((((uint32_t)(major / 10) * 16) + (uint32_t)(major % 10)) << 24) |
+             ((((uint32_t)(minor / 10) * 16) + (uint32_t)(minor % 10)) << 16);
+    }
+  }
+  fclose(fp);
+  return 0;
+}
+
 static int
 is_bcd(uint32_t byte)
 {
@@ -163,6 +188,11 @@ firmware_version(void)
 {
   uint8_t buf[0x18] = {0};
   uint32_t fw;
+
+  /* The kernel import is famous for returning failure without writing the
+   * buffer on newer firmwares, but the release string is sitting on disk.
+   * Try that first; the kstuff full/lite cutoff is meaningless without it. */
+  if ((fw = firmware_version_from_index_dat()) != 0) return fw;
 
   /* The size field goes in first; the call writes nothing without it. */
   *(uint32_t *)buf = sizeof(buf);

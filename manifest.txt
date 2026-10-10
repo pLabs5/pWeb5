@@ -1,121 +1,33 @@
-# Jailbreak Store autoloader — payload manifest
+# this is the default autoload manifest 
 #
-# This file decides which payloads get sent to elfldr, and in what order. It is
-# read at runtime by payloads/dispatcher.elf - the single payload the page hands
-# elfldr once the exploit is finished - not by the page, and not just displayed.
-#
-# Resolution order at runtime:
-#
-#   1. /data/pLabs5/pWeb5/manifest.txt on the console, if you have one - it wins
-#   2. this file, fetched from the site origin by the dispatcher
-#
-# There is no third fallback. If neither manifest can be read the run stops and
-# says so, rather than quietly loading something that was not asked for.
-#
-# Everything here is fetched over HTTP by the dispatcher. You do not have to
-# edit this file to pick your own plugins: drop a manifest at
-# /data/pLabs5/pWeb5/manifest.txt on the console and it replaces this one entirely.
-# See "personal plugins" below.
-#
-# Format: one "name=target" per line. Blank lines and lines starting with # are
-# ignored, as is anything after a # on a line. A bare "name" with no "=" is
-# treated as payloads/<name>; an explicit payloads/ prefix on a target means the
-# same thing, so "etahen.elf" and "etahen.elf=payloads/etaHEN.elf" are equal.
-#
-# One key is reserved: a line of just "wait=N" (or its alias "delay=N") sets
-# the pause between payloads to N seconds, overriding the built-in 5s default.
-# The value must be a clean number; if it is anything else the line is treated
-# as an ordinary entry, so a payload that happens to be called "wait" still
-# works. wait=0 disables the pause entirely.
-#
-# A target is one of three things:
-#
-#   payloads/<file>        a file on this site
-#   http(s)://host/<file>  a payload hosted anywhere else
-#   local:/data/pLabs5/pWeb5/f  a payload already sitting on the console
-#
-# A "//host/path" target is taken as https. Any other scheme is rejected and the
-# run fails on it, so a typo cannot quietly become a path on this site.
-#
-# A remote host does not need to send Access-Control-Allow-Origin. The fetch is
-# made by the dispatcher on the console, not by the WebView, so CORS does not
-# apply to it.
-#
-# A local: target is opened on the console, which is the only place a path like
-# that means anything. Only paths under /data/pLabs5/pWeb5/ are reachable - anything
-# else is rejected, and so is a ".." segment, which the kernel would otherwise
-# resolve after the prefix check - and the file has to be on the console before
-# the run starts, because this site has no way to put it there. A local payload
-# costs the same as a fetched one: both are streamed to elfldr without the
-# bytes ever passing through the page.
-#
-# ORDER MATTERS, and the gap between payloads matters more.
-#
-# etaHEN starts its FTP server the moment it lands, and shadowmountplus remounts
-# /system_ex. Sending those two close together panicked the console, so the
-# dispatcher waits 5 seconds between entries (a "wait=N" line above changes
-# that). If you add payloads, keep the ones that touch mounts or network
-# services apart.
-#
-# The dispatcher also stops rather than skipping a payload that will not send.
-# A hole in the chain leaves later payloads depending on one that never loaded,
-# which is worse than a run that fails and names the entry that failed.
+# this file decides what payloads dispatcher.elf sends if the local manifest doesnt exist
+# it gets read at runtime by payloads/dispatcher.elf
 
 # --- default: kstuff-lite, for firmware above 10.01 ---
 kstuff-lite.elf=payloads/kstuff-lite-1.11B.elf
 
 # --- etaHEN second, on its own, so its FTP server comes up settled ---
-etahen.elf=payloads/etaHEN.elf
+onionHEN.elf=payloads/HEN/OnionHEN.elf
+# etahen.elf=payloads/HEN/etaHEN-beta.elf # disabled until next beta
 
 
-# --- shadowmountplus: it remounts /system_ex, so it goes after the rest ---
+# --- loads shadowmountplus, should always come last --- #
+wait=8
 shadowmountplus.elf=payloads/shadowmountplus.elf
 
-# --- alternative: full kstuff, for firmware 10.01 and below ---
-# kstuff.elf=payloads/kstuff.elf
-# etahen.elf=payloads/etaHEN.elf
-# shadowmountplus.elf=payloads/shadowmountplus.elf
+# examples: 
+    # --- alternative: full kstuff, for firmware 10.01 and below ---
+    # kstuff.elf=payloads/kstuff.elf
+    # etahen.elf=payloads/etaHEN.elf
+    # shadowmountplus.elf=payloads/shadowmountplus.elf
 
-# --- a payload from somewhere else entirely, if a host will serve it ---
-# Prospector.elf=https://example.com/payloads/Prospector.elf
+    # --- a payload from a website on the internet, NEEDS to be a raw .elf. 
+    # Prospector.elf=https://example.com/payloads/Prospector.elf
 
-# --- a payload dropped on the console beforehand, no host needed ---
-# ProsperoMgr.elf=local:/data/pLabs5/pWeb5/ProsperoMgr.elf
+    # --- a payload dropped in the pWeb5 folder ---
+    # ProsperoMgr.elf=local:/data/pLabs5/pWeb5/plugins/ProsperoMgr.elf
 
-# ============================================================================
-# dRPC5 - REMOVED, NOT SHIPPED HERE
-# ============================================================================
-#
-# dRPC5 (github.com/pLabs5/dRPC5) used to be listed here and payloads/dRPC5.elf
-# used to sit in this folder. Both are gone. The entry parsed correctly and the
-# binary served fine - HTTP 200, valid ELF, matching the SDK's own entry
-# convention - but the payload never took on the console, so it was dropped
-# rather than left in a chain that silently does nothing. dRPC5 builds and runs
-# fine outside this manifest; it is only unreachable from here.
-#
-# To bring it back, add payloads/dRPC5.elf to this folder and uncomment the line:
-#
-#   dRPC5.elf=payloads/dRPC5.elf
-#
-# Put it AFTER shadowmountplus, which remounts /system_ex and needs to run late.
-# The dispatcher already waits 5s between entries (customise with a wait= key).
-#
-# LEGAL
-#
-# dRPC5 is by foxinwinter / pawprnt, who is not affiliated with, associated with,
-# sponsored by, or endorsed by Sony Interactive Entertainment, PlayStation,
-# Discord, or any of their companies or works.
-#
-# dRPC5 is provided "as is", without warranty of any kind, express or implied.
-# Use of it is at your own risk. You are solely responsible for complying with
-# Discord's Terms of Service, PlayStation's terms, and any applicable law. Its
-# protocol details and console identification values were obtained by reverse
-# engineering a firmware dump on a personally owned console, for personal
-# research and interoperability.
-#
-# The dRPC5 logo, favicon, and installed Tile ARE AI-generated. The rest of the
-# project is not. dRPC5 is licensed under the AGPL-3.0; the payloads listed
-# above carry their own separate terms and are the work of their own authors.
+
 # ============================================================================
 
 # ============================================================================
@@ -152,9 +64,8 @@ shadowmountplus.elf=payloads/shadowmountplus.elf
 # ============================================================================
 
 # ============================================================================
-# EXPIRY: payloads/etaHEN.elf stops working on 1 October 2026.
+# expiry: payloads/HEN/etaHEN.elf stopped working on 1 October 2026.
 #
-# etaHEN is time-limited. It expires October 1st 2026, if you want to keep
-# using it, set the consoles time + date before October 1st 2026 and it will
-# keep working
+# etaHEN-beta is time-limited. It expired October 1st 2026. 
+# we have moved to onionHEN until they next etaHEN beta.
 # ============================================================================
