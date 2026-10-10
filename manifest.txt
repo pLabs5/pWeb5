@@ -7,7 +7,7 @@
 kstuff-lite.elf=payloads/kstuff-lite-1.11B.elf
 
 # --- etaHEN second, on its own, so its FTP server comes up settled ---
-etahen.elf=payloads/HEN/OnionHEN.elf
+onionhen.elf=payloads/HEN/OnionHEN.elf
 # etahen.elf=payloads/HEN/etaHEN-beta.elf # disabled until next beta
 
 
